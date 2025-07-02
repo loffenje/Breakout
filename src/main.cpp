@@ -21,6 +21,7 @@ int main() {
     InitWindow(globals::appSettings.windowWidth, globals::appSettings.windowHeight, globals::appSettings.name);
     SetWindowMinSize(640, 480);
     SetExitKey(0);
+    SetTargetFPS(120);
 
     if (!IsWindowReady()) {
         TraceLog(LOG_ERROR, "Window initialization is failed!");

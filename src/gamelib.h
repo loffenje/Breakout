@@ -21,23 +21,24 @@ void RemoveByIndex(std::vector<T> &data, int index) {
 struct DrawItem {
     Vector2 position;
     Vector2 size;
-    ResId   texture = 0;
+    Texture2D   texture;
+    Rectangle   src;
     Color   color = WHITE;
     int     z_index = 0;
 };
 
-class DrawList {
+class DrawManager {
 public:
-    static DrawList &Instance();
+    static DrawManager &Instance();
 
     void Add(const DrawItem &item);
     void Dispatch();
 
-    DrawList(const DrawList &other) = delete;
-    DrawList &operator=(const DrawList &other) = delete;
+    DrawManager(const DrawManager &other) = delete;
+    DrawManager &operator=(const DrawManager &other) = delete;
 
 private:
-    DrawList() = default;
+    DrawManager() = default;
 
     std::vector<DrawItem> m_items;
 };
@@ -46,13 +47,12 @@ class Component {
 public:
     virtual void Init() {}
     virtual void Destroy() {}
-    virtual void Tick() = 0;
-    virtual void SetOwner(GameObject *go) { go = m_go; }
-    virtual void Clear() = 0;
+    virtual void Tick(f32 dt) = 0;
+    virtual void Clear() {}
     virtual const char *ComponentName() const = 0;
-    Component *GetNext() const { return m_next; }
+
+    void SetOwner(GameObject *go) { go = m_go; }
 protected:
-    Component *     m_next = nullptr;
     GameObject *    m_go = nullptr;
 };
 
@@ -79,10 +79,13 @@ public:
     GameObject *GetNext() const { return m_next; }
     void SetId(u32 id) { m_id = id; }
     void SetNext(GameObject *next) { m_next = next; }
-    void Tick();
+    void Tick(f32 dt);
 
     template <typename T>
     void AddComponent();
+
+    template <typename T, typename... Args>
+    void AddComponent(Args &&...args);
 
     template<typename T>
     T *GetComponent() const;
@@ -100,7 +103,7 @@ public:
     GameObjectManager() = default;
 
     void    Init();
-    void    Tick();
+    void    Tick(f32 dt);
     GameObject *Create();
     void    Destroy(GameObject *go);
 
@@ -148,15 +151,25 @@ void GameObject::Init() {
     m_components.reserve(capacity);
 }
 
-void GameObject::Tick() {
+void GameObject::Tick(f32 dt) {
     for (auto *comp : m_components) {
-        comp->Tick();
+        comp->Tick(dt);
     }
 }
 
 template <typename T>
 void GameObject::AddComponent() {
     Component *comp = m_arena.Push<T>();
+
+    comp->Init();
+    comp->SetOwner(this);
+
+    m_components.push_back(comp);
+}
+
+template <typename T, typename... Args>
+void GameObject::AddComponent(Args &&...args) {
+    Component *comp = m_arena.Push<T>(args...);
 
     comp->Init();
     comp->SetOwner(this);
@@ -213,9 +226,9 @@ GameObject *GameObjectManager::Create() {
     return go;
 }
 
-void GameObjectManager::Tick() {
+void GameObjectManager::Tick(f32 dt) {
     for (auto *go : m_gos) {
-        go->Tick();
+        go->Tick(dt);
     }
 }
 
@@ -235,28 +248,32 @@ void GameObjectManager::Destroy(GameObject *go) {
     RemoveByIndex(m_gos, destroyIdx);
 }
 
-DrawList &DrawList::Instance() {
-    static DrawList instance;
+DrawManager &DrawManager::Instance() {
+    static DrawManager instance;
 
     return instance;
 }
 
-void DrawList::Add(const DrawItem &item) {
+void DrawManager::Add(const DrawItem &item) {
     m_items.push_back(item);
 }
 
-void DrawList::Dispatch() {
+void DrawManager::Dispatch() {
     std::sort(m_items.begin(), m_items.end(), [](auto &lhs, auto &rhs) {
         return lhs.z_index < rhs.z_index;
     });
 
     for (const auto &item : m_items) {
-       // DrawTexturePro()
+        DrawTexturePro(item.texture,
+            item.src,
+            Rectangle{ item.position.x, item.position.y, item.size.x, item.size.y },
+            Vector2{ 0, 0 },
+            0.0f,
+            WHITE);
     }
 
     m_items.clear();
 }
-
 
 UIBox UIBox::Push(f32 xpos, f32 ypos, f32 w, f32 h) {
     UIBox box{ xpos, ypos, w, h };
