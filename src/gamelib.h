@@ -18,6 +18,49 @@ void RemoveByIndex(std::vector<T> &data, int index) {
     data.pop_back();
 }
 
+
+struct CollisionManifold {
+    Vector2         diff;
+    f32             penetration = 0.0f;
+    bool            collides = false;
+};
+
+struct AABB {
+    Vector2 center;
+    Vector2 halfExtents;
+};
+
+inline
+Rectangle ScaleAABB(Rectangle aabb) {
+    Rectangle result = {};
+    result.x = aabb.x - aabb.width;
+    result.y = aabb.y - aabb.height;
+    result.width = aabb.width * 2;
+    result.height = aabb.height * 2;
+
+    return result;
+}
+
+struct Circle {
+    Vector2 center;
+    f32     radius;
+};
+
+CollisionManifold AABBvsCircle(AABB aabb, Circle circle) {
+    CollisionManifold result = {};
+    Vector2 diff = Vector2Subtract(circle.center, aabb.center);
+    Vector2 clampedDiff = Vector2Clamp(diff, Vector2Negate(aabb.halfExtents), aabb.halfExtents);
+    Vector2 closestPoint = aabb.center + clampedDiff;
+    Vector2 distToClosest = closestPoint - circle.center;
+    f32 diffToClosest = Vector2Length(distToClosest);
+
+    result.diff = distToClosest;
+    result.penetration = circle.radius - fabsf(diffToClosest);
+    result.collides = diffToClosest <= circle.radius;
+
+    return result;
+}
+
 struct DrawItem {
     Vector2 position;
     Vector2 size;
@@ -50,8 +93,8 @@ public:
     virtual void Tick(f32 dt) = 0;
     virtual void Clear() {}
     virtual const char *ComponentName() const = 0;
-
-    void SetOwner(GameObject *go) { go = m_go; }
+    virtual void OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) {}
+    virtual void SetOwner(GameObject *go) { m_go = go; }
 protected:
     GameObject *    m_go = nullptr;
 };
@@ -169,7 +212,7 @@ void GameObject::AddComponent() {
 
 template <typename T, typename... Args>
 void GameObject::AddComponent(Args &&...args) {
-    Component *comp = m_arena.Push<T>(args...);
+    Component *comp = m_arena.Push<T>(std::forward<Args>(args)...);
 
     comp->Init();
     comp->SetOwner(this);

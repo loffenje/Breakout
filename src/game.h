@@ -7,12 +7,27 @@ namespace breakout {
 
 class Map;
 
+enum class Collision {
+    None,
+    Top,
+    Bottom,
+    Left,
+    Right,
+};
+
 class CollisionManager {
+    struct Collidable {
+        GameObject *    go;
+        Rectangle       bounds;
+    };
 public:
-    void Add(Rectangle rect);
+    void AddBall(GameObject *go);
+    void AddBlock(GameObject *go, Rectangle bounds);
     void Tick();
+    void DebugDraw();
 private:
-    std::vector<Rectangle> m_boundsList;
+    std::vector<Collidable> m_balls;
+    std::vector<Collidable> m_blocks;
 };
 
 struct GameState {
@@ -57,6 +72,7 @@ public:
     void Tick(f32 dt) override;
     Vector2 GetPosition() const { return m_position; }
     Vector2 GetSize() const { return m_size; }
+    Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
 
 private:
     Vector2 m_position;
@@ -74,16 +90,20 @@ class BallComponent : public Component {
 public:
     COMPONENT_NAME(BallComponent)
 
-    BallComponent(f32 x, f32 y, f32 r);
+    BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r);
 
     void Launch();
     void Tick(f32 dt) override;
+    void OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) override;
     Vector2 GetPosition() const { return m_position; }
+    Vector2 GetSize() const { return m_size; }
     f32 GetRadius() const { return m_radius; }
-
+    Vector2 GetCenter() const { return { m_position.x + m_radius, m_position.y + m_radius }; }
+    bool IsLaunched() const { return m_state == State::Launched; }
 private:
     State   m_state;
     Vector2 m_position;
+    Vector2 m_size;
     Vector2 m_velocity;
     f32     m_radius;
 };
@@ -97,6 +117,7 @@ public:
     void Tick(f32) override;
     Vector2 GetPosition() const { return m_position; }
     Vector2 GetSize() const { return m_size; }
+    Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
 
 private:
     Vector2 m_position;
@@ -123,10 +144,8 @@ void PlayerComponent::Tick(f32 dt) {
     if (newPosition.x >= g_state.worldDim.x && newPosition.x + m_size.x <= g_state.worldDim.width) {
         m_position = newPosition;
     }
-
+    
     if (IsKeyPressed(KEY_SPACE)) {
-        g_state.collisionMgr.Add(Rectangle{ m_position.x, m_position.y, m_size.x, m_size.y });
-        
         BallComponent *ballComp = g_state.ball->GetComponent<BallComponent>();
         ballComp->Launch();
     }
@@ -140,9 +159,10 @@ void PlayerComponent::Tick(f32 dt) {
     DrawManager::Instance().Add(drawItem);
 }
 
-BallComponent::BallComponent(f32 x, f32 y, f32 r) {
+BallComponent::BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r) {
     m_position = { x, y };
-    m_velocity = { x - 100.0f, -y };
+    m_size = { w, h };
+    m_velocity = { x + 100.0f, -y };
     m_radius = r;
     m_state = State::Attached;
 }
@@ -150,13 +170,13 @@ BallComponent::BallComponent(f32 x, f32 y, f32 r) {
 void BallComponent::Launch() {
     if (m_state == State::Attached) {
         m_state = State::Launched;
+        g_state.collisionMgr.AddBall(m_go);
     }
 }
 
 void BallComponent::Tick(f32 dt) {
     PlayerComponent *playerComp = g_state.player->GetComponent<PlayerComponent>();
     Vector2 playerPosition = { 0, 0 };
-    Vector2 size = { m_radius, m_radius };
     if (playerComp && m_state == State::Attached) {
         playerPosition = playerComp->GetPosition();
         m_position = { playerPosition.x + 32.0f, m_position.y };
@@ -168,14 +188,14 @@ void BallComponent::Tick(f32 dt) {
             m_velocity.x = -m_velocity.x;
             m_position.x = g_state.worldDim.x;
         }
-        else if (m_position.x + size.x <= g_state.worldDim.x) {
+        else if (m_position.x + m_size.x >= g_state.worldDim.width) {
             m_velocity.x = -m_velocity.x;
-            m_position.x = g_state.worldDim.width - m_position.x;
+            m_position.x = g_state.worldDim.width - m_size.x;
         }
 
         if (m_position.y <= g_state.worldDim.y) {
             m_velocity.y = -m_velocity.y;
-            m_position.y = g_state.worldDim.y + size.y;
+            m_position.y = g_state.worldDim.y + m_size.y;
         }
     }
 
@@ -183,16 +203,59 @@ void BallComponent::Tick(f32 dt) {
     drawItem.position = m_position;
     drawItem.texture = g_state.ballTexture;
     drawItem.src = Rectangle{ 0, 0, (f32)g_state.ballTexture.width, (f32)g_state.ballTexture.height };
-    drawItem.size = size;
+    drawItem.size = m_size;
     drawItem.z_index = 0;
     DrawManager::Instance().Add(drawItem);
+}
+
+void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) {
+    Vector2 norm = Vector2Normalize(manifold.diff);
+   
+    Collision collision = Collision::None;
+    if (Vector2DotProduct(norm, Vector2{ 0.0f, 1.0f }) > 0.0f) {
+        collision = Collision::Top;
+    }
+    else if (Vector2DotProduct(norm, Vector2{ 0.0f, -1.0f }) > 0.0f) {
+        collision = Collision::Bottom;
+    }
+    else if (Vector2DotProduct(norm, Vector2{ 1.0f, 0.0f }) > 0.0f) {
+        collision = Collision::Right;
+    }
+    else if (Vector2DotProduct(norm, Vector2{ -1.0f, 0.0f }) > 0.0f) {
+        collision = Collision::Left;
+    }
+
+    switch (collision) {
+    case Collision::Top:
+        m_position.y -= manifold.penetration;
+        m_velocity.y = -m_velocity.y;
+        break;
+    case Collision::Bottom:
+        m_position.y += manifold.penetration;
+        m_velocity.y = -m_velocity.y;
+        break;
+    case Collision::Left:
+        m_position.x -= manifold.penetration;
+        m_velocity.x -= m_velocity.x;
+        break;
+    case Collision::Right:
+        m_position.x += manifold.penetration;
+        m_velocity.x -= m_velocity.x;
+        break;
+    case Collision::None:
+    default:
+        break;
+    }
+
 }
 
 BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
     m_position = { x, y };
     m_size = { width, height };
 
-    g_state.collisionMgr.Add(Rectangle{ m_position.x, m_position.y, m_size.x, m_size.y });
+    Vector2 center = GetCenter();
+    Vector2 halfSize = { m_size.x * 0.5f, m_size.y * 0.5f };
+    g_state.collisionMgr.AddBlock(m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
 }
 
 void BlockComponent::Tick(f32) {
@@ -205,20 +268,76 @@ void BlockComponent::Tick(f32) {
     DrawManager::Instance().Add(drawItem);
 }
 
-void CollisionManager::Add(Rectangle bounds) {
-    m_boundsList.push_back(bounds);
+void CollisionManager::AddBlock(GameObject *go, Rectangle bounds) {
+    m_blocks.emplace_back(Collidable{go, bounds});
+}
+
+void CollisionManager::AddBall(GameObject *go) {
+    m_balls.push_back(Collidable{ go, Rectangle{} });
 }
 
 void CollisionManager::Tick() {
-    BallComponent *ballComp = g_state.ball->GetComponent<BallComponent>();
-    if (ballComp) {
-        for (auto bounds : m_boundsList) {
-            if (CheckCollisionCircleRec(ballComp->GetPosition(), ballComp->GetRadius(), bounds)) {
-                volatile int x = 5;
-                (void)x;
-                //
+// NOTE: reallisticly there is always one ball. But if I decide to add some powerup that adds multiple balls, then this setup already works.
+// TODO: consider to have quad tree. For now this is fine since the number of game objects is small.
+
+    //1st test - dynamic bounds vs dynamic bounds
+    PlayerComponent *playerComp = g_state.player->GetComponent<PlayerComponent>();
+
+    if (playerComp) {
+        Vector2 pos = playerComp->GetPosition();
+        Vector2 size = playerComp->GetSize();
+        Vector2 halfSize = { size.x * 0.5f, size.y * 0.5f };
+        AABB aabbPlayer = { playerComp->GetCenter(), halfSize };
+
+        Rectangle bounds = { pos.x, pos.y, size.x, size.y };
+        for (auto &ball : m_balls) {
+            BallComponent *ballComp = ball.go->GetComponent<BallComponent>();
+            Vector2 center = ballComp->GetCenter();
+            f32 radius = ballComp->GetRadius();
+            ball.bounds = Rectangle{ center.x, center.y, radius, radius };
+
+            Circle circle = { center, radius };
+            CollisionManifold manifold = AABBvsCircle(aabbPlayer, circle);
+            if (manifold.collides) {
+                ballComp->OnCollision(manifold, g_state.player);
             }
         }
+    }
+
+    //2nd test - dynamic bounds vs static bounds
+    for (auto ball : m_balls) {
+        BallComponent *ballComp = ball.go->GetComponent<BallComponent>();
+        Vector2 center = { ball.bounds.x, ball.bounds.y };
+        f32 radius = ball.bounds.width;
+        Circle circle = { center, radius };
+        for (auto block : m_blocks) {
+            AABB aabb = {};
+            aabb.center = { block.bounds.x, block.bounds.y };
+            aabb.halfExtents = { block.bounds.width, block.bounds.height };
+            CollisionManifold manifold = AABBvsCircle(aabb, circle);
+
+            if (manifold.collides) {
+                ballComp->OnCollision(manifold, block.go);
+            }
+        }
+    }
+}
+
+void CollisionManager::DebugDraw() {
+    PlayerComponent *playerComp = g_state.player->GetComponent<PlayerComponent>();
+    Vector2 pos = playerComp->GetPosition();
+    Vector2 size = playerComp->GetSize();
+    Rectangle bounds = { pos.x, pos.y, size.x, size.y };
+    
+    DrawRectangleLinesEx(bounds, 2.0f, RED);
+
+    for (const auto &ball : m_balls) {
+        DrawCircleLinesV(Vector2{ ball.bounds.x, ball.bounds.y }, ball.bounds.width, RED);
+    }
+
+    for (const auto &block : m_blocks) {
+        auto bounds = ScaleAABB(block.bounds);
+        DrawRectangleLinesEx(bounds, 2.0f, RED);
     }
 }
 
@@ -251,6 +370,7 @@ Vector2 Map::GetOrigin() const {
 void Map::Load(u8 *data) {
     f32 xoffset = m_origin.x;
     f32 yoffset = m_origin.y;
+    const int padding = 5.0f;
     for (int y = 0; y < m_height; ++y) {
         for (int x = 0; x < m_width; ++x) {
             int index = (y * m_width) + x;
@@ -259,9 +379,9 @@ void Map::Load(u8 *data) {
                 GameObject *tile = g_state.goMgr.Create();
                 tile->AddComponent<BlockComponent>(xoffset, yoffset, m_tileSize.x, m_tileSize.y);
            }
-           xoffset += m_tileSize.x;
+           xoffset += m_tileSize.x + padding;
         }
-        yoffset -= m_tileSize.y;
+        yoffset -= m_tileSize.y + padding;
         xoffset = m_origin.x;
     }
 }
@@ -278,7 +398,7 @@ void Initialize() {
     g_state.player->AddComponent<PlayerComponent>(-16.0f, globals::appSettings.screenHeight - 40.0f, 128.0f, 32.0f);
 
     g_state.ball = g_state.goMgr.Create();
-    g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 100.0f, 64.0f);
+    g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 100.0f, 64.0f, 64.0f, 32.0f);
 
     g_state.texture = LoadTexture("assets/tiles.png");
     g_state.ballTexture = LoadTexture("assets/doge.png");
@@ -312,6 +432,9 @@ void Draw() {
 
     DrawManager::Instance().Dispatch();
 
+#ifdef DEVELOPER
+    //g_state.collisionMgr.DebugDraw();
+#endif
     EndMode2D();
 
 }
