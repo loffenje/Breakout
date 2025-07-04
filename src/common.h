@@ -65,6 +65,7 @@ struct Buffer {
     }
 };
 
+
 namespace globals {
 	AppSettings appSettings;
 }

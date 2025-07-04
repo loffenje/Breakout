@@ -40,7 +40,71 @@ struct HUD {
     void Draw();
 };
 
+
+enum class GameplayState {
+    RunGame,
+    RunMenu,
+    PauseMenu,
+    GameOver,
+    Quit
+};
+
+struct Menu {
+    enum : int {
+        START_GAME = 0,
+        RESUME,
+        QUIT,
+        MAX_SIZE
+    };
+
+    View view;
+    View stack[MAX_SIZE];
+
+    std::string texts[MAX_SIZE] = {
+        "Start game",
+        "Resume",
+        "Quit"
+    };
+
+    int options[MAX_SIZE] = {
+        START_GAME,
+        RESUME,
+        QUIT
+    };
+
+    int cursor = 0;
+    int option = 0;
+
+    void Init(View parent) {
+        view = View::PushCentered(parent, 400.0f, -400.0f);
+        f32 offset = 5.0f;
+        for (int i = 0; i < MAX_SIZE; ++i) {
+            stack[i] = View::PushFrom(view, 0, offset, 0.0f, 100.0f);
+            offset += 100.0f;
+        }
+    }
+
+    void Up() {
+        cursor--;
+        if (cursor < 0) {
+            cursor = MAX_SIZE - 1;
+        }
+
+        option = options[cursor];
+    }
+
+    void Down() {
+        cursor++;
+        if (cursor > MAX_SIZE - 1) {
+            cursor = 0;
+        }
+        option = options[cursor];
+    }
+};
+
 struct GameState {
+    GameplayState       gameplayState;
+    Menu                menu;
     HUD                 hud;
     Rectangle           worldDim;
     GameObjectManager   goMgr;
@@ -53,7 +117,7 @@ struct GameState {
     Resources           res;
 };
 
-static GameState g_state;
+static GameState g_gameState;
 
 class Map {
 public:
@@ -156,7 +220,7 @@ PlayerComponent::PlayerComponent(f32 x, f32 y, f32 w, f32 h) {
 
 
 void PlayerComponent::Init() {
-    m_textureId = g_state.res.Acquire("assets/tiles.png");
+    m_textureId = g_gameState.res.Acquire("assets/tiles.png");
     m_textureSrc = Rectangle{ 96, 64, 16, 16 };
 }
 
@@ -181,21 +245,19 @@ void PlayerComponent::Tick(f32 dt) {
         newPosition.x += velocity;
     }
 
-
-
-    if (newPosition.x >= g_state.worldDim.x && newPosition.x + m_size.x <= g_state.worldDim.width) {
+    if (newPosition.x >= g_gameState.worldDim.x && newPosition.x + m_size.x <= g_gameState.worldDim.width) {
         m_velocity = velocity;
         m_position = newPosition;
     }
     
     if (IsKeyPressed(KEY_SPACE)) {
-        BallComponent *ballComp = g_state.ball->GetComponent<BallComponent>();
+        BallComponent *ballComp = g_gameState.ball->GetComponent<BallComponent>();
         ballComp->Launch();
     }
 
     DrawItem drawItem = {};
     drawItem.position = m_position;
-    drawItem.texture = g_state.res.textures[m_textureId];
+    drawItem.texture = g_gameState.res.textures[m_textureId];
     drawItem.src = m_textureSrc;
     drawItem.size = m_size;
     drawItem.z_index = 0;
@@ -213,16 +275,16 @@ BallComponent::BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r) {
 void BallComponent::Launch() {
     if (m_state == State::Attached) {
         m_state = State::Launched;
-        g_state.collisionMgr.AddBall(m_go);
+        g_gameState.collisionMgr.AddBall(m_go);
     }
 }
 
 void BallComponent::Init() {
-    m_textureId = g_state.res.Acquire("assets/doge.png");
+    m_textureId = g_gameState.res.Acquire("assets/doge.png");
 }
 
 void BallComponent::Tick(f32 dt) {
-    PlayerComponent *playerComp = g_state.player->GetComponent<PlayerComponent>();
+    PlayerComponent *playerComp = g_gameState.player->GetComponent<PlayerComponent>();
     Vector2 playerPosition = { 0, 0 };
     if (playerComp && m_state == State::Attached) {
         playerPosition = playerComp->GetPosition();
@@ -231,25 +293,25 @@ void BallComponent::Tick(f32 dt) {
     else if (playerComp && m_state == State::Launched) {
         m_position += m_velocity * dt;
 
-        if (m_position.x <= g_state.worldDim.x) {
+        if (m_position.x <= g_gameState.worldDim.x) {
             m_velocity.x = -m_velocity.x;
-            m_position.x = g_state.worldDim.x;
+            m_position.x = g_gameState.worldDim.x;
         }
-        else if (m_position.x + m_size.x >= g_state.worldDim.width) {
+        else if (m_position.x + m_size.x >= g_gameState.worldDim.width) {
             m_velocity.x = -m_velocity.x;
-            m_position.x = g_state.worldDim.width - m_size.x;
+            m_position.x = g_gameState.worldDim.width - m_size.x;
         }
 
-        if (m_position.y <= g_state.worldDim.y) {
+        if (m_position.y <= g_gameState.worldDim.y) {
             m_velocity.y = -m_velocity.y;
-            m_position.y = g_state.worldDim.y;
+            m_position.y = g_gameState.worldDim.y;
         }
     }
 
-    Texture2D texture = g_state.res.textures[m_textureId];
+    Texture2D texture = g_gameState.res.textures[m_textureId];
     DrawItem drawItem = {};
     drawItem.position = m_position;
-    drawItem.texture = g_state.res.textures[m_textureId];
+    drawItem.texture = g_gameState.res.textures[m_textureId];
     drawItem.src = Rectangle{ 0, 0, (f32)texture.width, (f32)texture.height };
     drawItem.size = m_size;
     drawItem.z_index = 0;
@@ -315,7 +377,7 @@ void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *c
 
     ResolveBlockCollision(manifold);
 
-    g_state.hitScore++;
+    g_gameState.hitScore++;
 }
 
 BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
@@ -326,16 +388,16 @@ BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
 void BlockComponent::Init() {
     Vector2 center = GetCenter();
     Vector2 halfSize = { m_size.x * 0.5f, m_size.y * 0.5f };
-    m_textureId = g_state.res.Acquire("assets/tiles.png");
+    m_textureId = g_gameState.res.Acquire("assets/tiles.png");
     m_textureSrc = Rectangle{ 0, 0, 25, 25 };
 
-    g_state.collisionMgr.AddBlock(m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
+    g_gameState.collisionMgr.AddBlock(m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
 }
 
 void BlockComponent::Tick(f32) {
     DrawItem drawItem = {};
     drawItem.position = m_position;
-    drawItem.texture = g_state.res.textures[m_textureId];
+    drawItem.texture = g_gameState.res.textures[m_textureId];
     drawItem.size = m_size;
     drawItem.src = m_textureSrc;
     drawItem.z_index = -999;
@@ -343,7 +405,7 @@ void BlockComponent::Tick(f32) {
 }
 
 void BlockComponent::OnCollision(const CollisionManifold &manifold, GameObject *go) {
-    g_state.collisionMgr.RemoveBlock(m_go);
+    g_gameState.collisionMgr.RemoveBlock(m_go);
 }
 
 void CollisionManager::AddBlock(GameObject *go, Rectangle bounds) {
@@ -376,7 +438,7 @@ void CollisionManager::Tick() {
 // TODO: consider to have quad tree. For now this is fine since the number of game objects is small.
 
     //1st test - dynamic bounds vs dynamic bounds
-    PlayerComponent *playerComp = g_state.player->GetComponent<PlayerComponent>();
+    PlayerComponent *playerComp = g_gameState.player->GetComponent<PlayerComponent>();
 
     if (playerComp) {
         Vector2 pos = playerComp->GetPosition();
@@ -394,7 +456,7 @@ void CollisionManager::Tick() {
             Circle circle = { center, radius };
             CollisionManifold manifold = AABBvsCircle(aabbPlayer, circle);
             if (manifold.collides) {
-                ballComp->OnCollision(manifold, g_state.player);
+                ballComp->OnCollision(manifold, g_gameState.player);
             }
         }
     }
@@ -415,7 +477,7 @@ void CollisionManager::Tick() {
                 BlockComponent *blockComp = block.go->GetComponent<BlockComponent>();
                 ballComp->OnCollision(manifold, block.go);
                 blockComp->OnCollision(manifold, ball.go);
-                g_state.goMgr.Destroy(block.go);
+                g_gameState.goMgr.Destroy(block.go);
                 break;
             }
         }
@@ -423,7 +485,7 @@ void CollisionManager::Tick() {
 }
 
 void CollisionManager::DebugDraw() {
-    PlayerComponent *playerComp = g_state.player->GetComponent<PlayerComponent>();
+    PlayerComponent *playerComp = g_gameState.player->GetComponent<PlayerComponent>();
     Vector2 pos = playerComp->GetPosition();
     Vector2 size = playerComp->GetSize();
     Rectangle bounds = { pos.x, pos.y, size.x, size.y };
@@ -475,7 +537,7 @@ void Map::Load(u8 *data) {
             int index = (y * m_width) + x;
             bool isTileEmpty = data[index] == 0;
             if (!isTileEmpty) {
-                GameObject *tile = g_state.goMgr.Create();
+                GameObject *tile = g_gameState.goMgr.Create();
                 tile->AddComponent<BlockComponent>(xoffset, yoffset, m_tileSize.x, m_tileSize.y);
            }
            xoffset += m_tileSize.x + padding;
@@ -488,13 +550,13 @@ void Map::Load(u8 *data) {
 void HUD::Init(View parent, ResHandle fontHandle) {
     container = View::PushFrom(parent, 10.0f, 20.0f, 256.0f, 128.0f);
     text = View::PushText(container, 5.0f, 2.0f);
-    fontId = g_state.res.Acquire(fontHandle);
+    fontId = g_gameState.res.Acquire(fontHandle);
 }
 
 void HUD::Draw() {
-    Font font = g_state.res.fonts[fontId];
+    Font font = g_gameState.res.fonts[fontId];
     DrawTextEx(font,
-        TextFormat("Score: %d", g_state.hitScore),
+        TextFormat("Score: %d", g_gameState.hitScore),
         Vector2{ text.xpos, text.ypos }, font.baseSize,
         1.0f, WHITE);
 
@@ -506,25 +568,25 @@ void HUD::Draw() {
 
 void Initialize() {
     View mainView = View::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
-    g_state.worldDim.x = globals::appSettings.screenWidth * -0.5f;
-    g_state.worldDim.y = globals::appSettings.screenHeight * -0.5f;
-    g_state.worldDim.width = globals::appSettings.screenWidth * 0.5f;
-    g_state.worldDim.height = globals::appSettings.screenHeight * 0.5f;
+    g_gameState.worldDim.x = globals::appSettings.screenWidth * -0.5f;
+    g_gameState.worldDim.y = globals::appSettings.screenHeight * -0.5f;
+    g_gameState.worldDim.width = globals::appSettings.screenWidth * 0.5f;
+    g_gameState.worldDim.height = globals::appSettings.screenHeight * 0.5f;
 
-    g_state.res.LoadTexture("assets/bg.png");
-    g_state.res.LoadTexture("assets/tiles.png");
-    g_state.res.LoadTexture("assets/doge.png");
-    auto fontHandle = g_state.res.LoadFont("assets/nicefont.ttf", 72); // probably not
+    g_gameState.res.LoadTexture("assets/bg.png");
+    g_gameState.res.LoadTexture("assets/tiles.png");
+    g_gameState.res.LoadTexture("assets/doge.png");
+    auto fontHandle = g_gameState.res.LoadFont("assets/nicefont.ttf", 72); // probably not
 
-    g_state.hud.Init(mainView, fontHandle);
+    g_gameState.hud.Init(mainView, fontHandle);
 
-    g_state.goMgr.Init();
+    g_gameState.goMgr.Init();
 
-    g_state.player = g_state.goMgr.Create();
-    g_state.player->AddComponent<PlayerComponent>(-16.0f, globals::appSettings.screenHeight - 40.0f, 128.0f, 32.0f);
+    g_gameState.player = g_gameState.goMgr.Create();
+    g_gameState.player->AddComponent<PlayerComponent>(-16.0f, globals::appSettings.screenHeight - 40.0f, 128.0f, 32.0f);
 
-    g_state.ball = g_state.goMgr.Create();
-    g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 110.0f, 64.0f, 64.0f, 32.0f);
+    g_gameState.ball = g_gameState.goMgr.Create();
+    g_gameState.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 110.0f, 64.0f, 64.0f, 32.0f);
 
 
     const int width = 9;
@@ -535,36 +597,119 @@ void Initialize() {
         0, 0, 1, 1, 0, 0, 1, 1, 1,
     };
 
-    g_state.camera.offset = {globals::appSettings.screenWidth * 0.5f, globals::appSettings.screenHeight * 0.5f};
-    g_state.camera.target = {0,0};
-    g_state.camera.rotation = 0.0f;
-    g_state.camera.zoom = 1.0f;
+    g_gameState.camera.offset = {globals::appSettings.screenWidth * 0.5f, globals::appSettings.screenHeight * 0.5f};
+    g_gameState.camera.target = {0,0};
+    g_gameState.camera.rotation = 0.0f;
+    g_gameState.camera.zoom = 1.0f;
 
     Vector2 originMap = { -globals::appSettings.screenWidth * 0.3f, 500.0f };
-    g_state.map = new Map(originMap, Vector2{ 128, 64 }, width, height);
-    g_state.map->Load(tiles);
+    g_gameState.map = new Map(originMap, Vector2{ 128, 64 }, width, height);
+    g_gameState.map->Load(tiles);
+
+    g_gameState.gameplayState = GameplayState::RunMenu;
+    g_gameState.menu.Init(mainView);
 }
 
-void Update(f32 dt) {
+static
+void UpdateGame(f32 dt) {
+    switch (g_gameState.gameplayState) {
+    case GameplayState::RunGame:
+        g_gameState.goMgr.Tick(dt);
+        g_gameState.collisionMgr.Tick();
+        break;
+    case GameplayState::GameOver:
+        break;
+    }
+}
 
-    g_state.goMgr.Tick(dt);
-    g_state.collisionMgr.Tick();
+static
+void UpdateMenu() {
+    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+        g_gameState.menu.Down();
+    }
+
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+        g_gameState.menu.Up();
+    }
+
+    if (IsKeyPressed(KEY_ENTER)) {
+        switch (g_gameState.menu.option) {
+        case Menu::START_GAME: 
+            g_gameState.gameplayState = GameplayState::RunGame;
+            break;
+        case Menu::QUIT:
+            g_gameState.gameplayState = GameplayState::Quit;
+            break;
+        }
+    }
+}
+
+void Update(f32 dt, bool &exitRequested) {
+
+    if (g_gameState.gameplayState == GameplayState::RunGame || g_gameState.gameplayState == GameplayState::GameOver) {
+        UpdateGame(dt);
+    }
+    else if (g_gameState.gameplayState == GameplayState::RunMenu || g_gameState.gameplayState == GameplayState::PauseMenu) {
+        UpdateMenu();
+    }
+    else {
+        exitRequested = true;
+    }
+    
+}
+
+static
+void DrawGame() {
+    switch (g_gameState.gameplayState) {
+    case GameplayState::RunGame: {
+        int background = g_gameState.res.Acquire("assets/background.png");
+        DrawTextureEx(g_gameState.res.textures[background], Vector2{ 0, 0 }, 0.0f, 2.0f, WHITE);
+
+        BeginMode2D(g_gameState.camera);
+
+        DrawManager::Instance().Dispatch();
+
+#if 1
+        g_gameState.collisionMgr.DebugDraw();
+#endif
+        EndMode2D();
+
+        g_gameState.hud.Draw();
+        break;
+    }
+    case GameplayState::GameOver: {
+        break;
+    }
+    }
+}
+
+static
+void DrawMenu() {
+    int fontId = g_gameState.res.Acquire("assets/nicefont.ttf");
+    Font font = g_gameState.res.fonts[fontId];
+
+    for (int i = 0; i < Menu::MAX_SIZE; ++i) {
+        Color highlightColor = WHITE;
+        if (g_gameState.menu.option == i) {
+            highlightColor = DARKBLUE;
+        }
+        View view = g_gameState.menu.stack[i];
+        DrawTextEx(font,
+            g_gameState.menu.texts[i].c_str(),
+            Vector2{ view.xpos, view.ypos }, font.baseSize,
+            1.0f, highlightColor);
+    }
+
 }
 
 void Draw() {
-    int background = g_state.res.Acquire("assets/background.png");
-    DrawTextureEx(g_state.res.textures[background], Vector2{ 0, 0 }, 0.0f, 2.0f, WHITE);
 
-    BeginMode2D(g_state.camera);
-
-    DrawManager::Instance().Dispatch();
-
-#if 1
-    g_state.collisionMgr.DebugDraw();
-#endif
-    EndMode2D();
-
-    g_state.hud.Draw();
+    if (g_gameState.gameplayState == GameplayState::RunGame || g_gameState.gameplayState == GameplayState::GameOver) {
+        DrawGame();
+    }
+    else {
+        DrawMenu();
+    }
 }
 
 }

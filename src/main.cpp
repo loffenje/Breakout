@@ -37,8 +37,14 @@ int main() {
 
     while (!WindowShouldClose()) {
 
+        bool exitRequested = false;
         f32 dt = GetFrameTime();
-        breakout::Update(dt);
+        
+        breakout::Update(dt, exitRequested);
+
+        if (exitRequested) {
+            break;
+        }
 
         BeginTextureMode(target);
         ClearBackground(DARKGRAY);
@@ -62,6 +68,7 @@ int main() {
             0.0f, WHITE);
 
         EndDrawing();
+
     }
 
     CloseWindow();
