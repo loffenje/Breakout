@@ -3,6 +3,7 @@
 #include "common.h"
 #include "memory_arena.h"
 #include <vector>
+#include <unordered_map>
 
 // This file contains common utils, helpers and core data structures for the actual gameplay code
 
@@ -10,14 +11,95 @@ namespace breakout {
 
 class GameObject;
 
-using ResId = u64;
-
 template <typename T>
 void RemoveByIndex(std::vector<T> &data, int index) {
     data[index] = std::move(data.back());
     data.pop_back();
 }
 
+using ResHandle = u32;
+
+enum ResType : int {
+    RES_INVALID = 0,
+    RES_SOUND,
+    RES_FONT,
+    RES_TEXTURE
+};
+
+inline
+ResType ResGetType(ResHandle handle) {
+    ResType result = static_cast<ResType>((handle >> 24) & 0xff);
+    return result;
+}
+
+inline
+u32 ResGetIndex(ResHandle handle) {
+    u32 index = handle & 0x00ffffff;
+    return index;
+}
+
+inline
+ResHandle ResCreateHandle(u32 index, ResType type) {
+    ResHandle result = (static_cast<ResHandle>(type) << 24) | (index & 0x00ffffff);
+
+    return result;
+}
+
+ResHandle INVALID_HANDLE = ResCreateHandle(0, RES_INVALID);
+struct Resources {
+    static constexpr int MAX_RESOURCES = 32;
+
+    Buffer<Sound, MAX_RESOURCES>                    sounds;
+    Buffer<Font, MAX_RESOURCES>                     fonts;
+    Buffer<Texture2D, MAX_RESOURCES>                textures;
+    std::unordered_map<std::string, ResHandle>      handles;
+
+    ResHandle LoadTexture(const char *filename) {
+        Texture2D texture = ::LoadTexture(filename);
+        int index = textures.Add(texture);
+        auto handle = ResCreateHandle(index, RES_TEXTURE);
+
+        handles[filename] = handle;
+
+        return handle;
+    }
+
+    ResHandle LoadSound(const char *filename) {
+        Sound sound = ::LoadSound(filename);
+        int index = sounds.Add(sound);
+        auto handle = ResCreateHandle(index, RES_SOUND);
+
+        handles[filename] = handle;
+
+        return handle;
+    }
+
+    ResHandle LoadFont(const char *filename) {
+        Font font = ::LoadFont(filename);
+        int index = fonts.Add(font);
+        auto handle = ResCreateHandle(index, RES_FONT);
+
+        handles[filename] = handle;
+
+        return handle;
+    }
+
+    int Acquire(const std::string &name) {
+        const auto handleIt = handles.find(name);
+        if (handleIt != handles.end()) {
+            return Acquire(handleIt->second);
+        }
+
+        return INVALID_HANDLE;
+    }
+
+    int Acquire(ResHandle handle) {
+        ResType type = ResGetType(handle);
+        int result = ResGetIndex(handle);
+        assert(result >= 0 && result < MAX_RESOURCES);
+        return result;
+    }
+};
 
 struct CollisionManifold {
     Vector2         diff;

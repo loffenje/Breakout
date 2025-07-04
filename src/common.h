@@ -40,6 +40,31 @@ struct AppSettings {
 static constexpr int TARGET_FPS = 90;
 static constexpr f32 TIME_STEP = 1.0f / static_cast<f32>(TARGET_FPS);
 
+template <typename T, int N>
+struct Buffer {
+    T   data[N];
+    u32 len = 0;
+
+    Buffer() {
+        memset(data, 0, sizeof(data));
+    }
+
+    T &operator[](int index) {
+        return data[index];
+    }
+
+    const T &operator[](int index) const {
+        return data[index];
+    }
+
+    int Add(const T &item) {
+        assert(len + 1 < N);
+        data[len++] = item;
+
+        return len - 1;
+    }
+};
+
 namespace globals {
 	AppSettings appSettings;
 }

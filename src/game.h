@@ -38,10 +38,9 @@ struct GameState {
     CollisionManager    collisionMgr;
     Camera2D            camera;
     Map *               map;
-    Texture2D           texture;
-    Texture2D           ballTexture;
     GameObject *        player;
     GameObject *        ball;
+    Resources           res;
 };
 
 static GameState g_state;
@@ -70,6 +69,8 @@ public:
     static constexpr f32 SPEED = 480.0f;
 
     PlayerComponent(f32 x, f32 y, f32 w, f32 h);
+
+    void Init() override;
     void Tick(f32 dt) override;
     Vector2 GetPosition() const { return m_position; }
     f32 GetVelocity() const { return m_velocity; }
@@ -77,9 +78,11 @@ public:
     Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
 
 private:
-    Vector2 m_position;
-    Vector2 m_size;
-    f32     m_velocity;
+    Vector2     m_position;
+    Vector2     m_size;
+    f32         m_velocity;
+    int         m_textureId;
+    Rectangle   m_textureSrc;
 };
 
 class BallComponent : public Component {
@@ -95,6 +98,7 @@ public:
 
     BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r);
 
+    void Init() override;
     void Launch();
     void Tick(f32 dt) override;
     void OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) override;
@@ -109,6 +113,7 @@ private:
     Vector2 m_size;
     Vector2 m_velocity;
     f32     m_radius;
+    int     m_textureId;
 };
 
 class BlockComponent : public Component {
@@ -123,14 +128,22 @@ public:
     Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
     void OnCollision(const CollisionManifold &manifold, GameObject *go);
 private:
-    Vector2 m_position;
-    Vector2 m_size;
+    Vector2     m_position;
+    Vector2     m_size;
+    int         m_textureId;
+    Rectangle   m_textureSrc;
 };
 
 
 PlayerComponent::PlayerComponent(f32 x, f32 y, f32 w, f32 h) {
     m_position = { x, y };
     m_size = { w, h };
+}
+
+
+void PlayerComponent::Init() {
+    m_textureId = g_state.res.Acquire("assets/tiles.png");
+    m_textureSrc = Rectangle{ 96,64, 16, 16 };
 }
 
 void PlayerComponent::Tick(f32 dt) {
@@ -159,8 +172,8 @@ void PlayerComponent::Tick(f32 dt) {
 
     DrawItem drawItem = {};
     drawItem.position = m_position;
-    drawItem.texture = g_state.texture;
-    drawItem.src = Rectangle{ 96,64, 16, 16 };
+    drawItem.texture = g_state.res.textures[m_textureId];
+    drawItem.src = m_textureSrc;
     drawItem.size = m_size;
     drawItem.z_index = 0;
     DrawManager::Instance().Add(drawItem);
@@ -179,6 +192,10 @@ void BallComponent::Launch() {
         m_state = State::Launched;
         g_state.collisionMgr.AddBall(m_go);
     }
+}
+
+void BallComponent::Init() {
+    m_textureId = g_state.res.Acquire("assets/doge.png");
 }
 
 void BallComponent::Tick(f32 dt) {
@@ -206,10 +223,13 @@ void BallComponent::Tick(f32 dt) {
         }
     }
 
+
+
+    Texture2D texture = g_state.res.textures[m_textureId];
     DrawItem drawItem = {};
     drawItem.position = m_position;
-    drawItem.texture = g_state.ballTexture;
-    drawItem.src = Rectangle{ 0, 0, (f32)g_state.ballTexture.width, (f32)g_state.ballTexture.height };
+    drawItem.texture = g_state.res.textures[m_textureId];
+    drawItem.src = Rectangle{ 0, 0, (f32)texture.width, (f32)texture.height };
     drawItem.size = m_size;
     drawItem.z_index = 0;
     DrawManager::Instance().Add(drawItem);
@@ -277,15 +297,18 @@ BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
 void BlockComponent::Init() {
     Vector2 center = GetCenter();
     Vector2 halfSize = { m_size.x * 0.5f, m_size.y * 0.5f };
+    m_textureId = g_state.res.Acquire("assets/tiles.png");
+    m_textureSrc = Rectangle{ 0, 0, 25, 25 };
+
     g_state.collisionMgr.AddBlock(m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
 }
 
 void BlockComponent::Tick(f32) {
     DrawItem drawItem = {};
     drawItem.position = m_position;
-    drawItem.texture = g_state.texture;
+    drawItem.texture = g_state.res.textures[m_textureId];
     drawItem.size = m_size;
-    drawItem.src = Rectangle{ 0, 0, 25, 25 };
+    drawItem.src = m_textureSrc;
     drawItem.z_index = -999;
     DrawManager::Instance().Add(drawItem);
 }
@@ -439,6 +462,10 @@ void Initialize() {
     g_state.worldDim.y = globals::appSettings.screenHeight * -0.5f;
     g_state.worldDim.width = globals::appSettings.screenWidth * 0.5f;
     g_state.worldDim.height = globals::appSettings.screenHeight * 0.5f;
+
+    g_state.res.LoadTexture("assets/tiles.png");
+    g_state.res.LoadTexture("assets/doge.png");
+
     g_state.goMgr.Init();
 
     g_state.player = g_state.goMgr.Create();
@@ -447,8 +474,7 @@ void Initialize() {
     g_state.ball = g_state.goMgr.Create();
     g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 110.0f, 64.0f, 64.0f, 32.0f);
 
-    g_state.texture = LoadTexture("assets/tiles.png");
-    g_state.ballTexture = LoadTexture("assets/doge.png");
+
 
     const int width = 9;
     const int height = 3;
