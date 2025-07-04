@@ -74,8 +74,8 @@ struct Resources {
         return handle;
     }
 
-    ResHandle LoadFont(const char *filename) {
-        Font font = ::LoadFont(filename);
+    ResHandle LoadFont(const char *filename, int fontSize) {
+        Font font = ::LoadFontEx(filename, fontSize, 0, 256);
         int index = fonts.Add(font);
         auto handle = ResCreateHandle(index, RES_FONT);
 
@@ -94,7 +94,10 @@ struct Resources {
     }
 
     int Acquire(ResHandle handle) {
+        assert(handle != INVALID_HANDLE);
         ResType type = ResGetType(handle);
+        assert(type != RES_INVALID);
+
         int result = ResGetIndex(handle);
         assert(result >= 0 && result < MAX_RESOURCES);
         return result;
@@ -143,13 +146,22 @@ CollisionManifold AABBvsCircle(AABB aabb, Circle circle) {
     return result;
 }
 
+enum class DrawItemType {
+    Texture,
+    Font
+};
+
 struct DrawItem {
-    Vector2 position;
-    Vector2 size;
-    Texture2D   texture;
-    Rectangle   src;
-    Color   color = WHITE;
-    int     z_index = 0;
+    DrawItemType    type = DrawItemType::Texture;
+    Vector2         position;
+    Vector2         size;
+    Texture2D       texture;
+    Rectangle       src;
+    Font            font;
+    f32             spacing = 1.0f;
+    std::string     text;
+    Color           color = WHITE;
+    int             z_index = 0;
 };
 
 class DrawManager {
@@ -165,7 +177,8 @@ public:
 private:
     DrawManager() = default;
 
-    std::vector<DrawItem> m_items;
+    std::vector<DrawItem>    m_textureItems;
+    std::vector<DrawItem>    m_fontItems;
 };
 
 class Component {
@@ -245,21 +258,21 @@ private:
 };
 
 
-struct UIBox {
+struct View {
     f32 xpos = 0.0f;
     f32 ypos = 0.0f;
     f32 width = 0.0f;
     f32 height = 0.0f;
 
-    static UIBox Push(f32 xpos, f32 ypos, f32 w, f32 h);
-    static UIBox PushFrom(UIBox parent, f32 xpos, f32 ypos, f32 w, f32 h);
-    static UIBox PushText(UIBox parent, f32 xpos, f32 ypos);
-    static UIBox PushCentered(UIBox parent, f32 w, f32 h);
+    static View Push(f32 xpos, f32 ypos, f32 w, f32 h);
+    static View PushFrom(View parent, f32 xpos, f32 ypos, f32 w, f32 h);
+    static View PushText(View parent, f32 xpos, f32 ypos);
+    static View PushCentered(View parent, f32 w, f32 h);
     void AddPadding(f32 padding, f32 alignFactor);
 };
 
 inline
-Rectangle UIBox2Rectangle(UIBox box) {
+Rectangle UIBox2Rectangle(View box) {
     Rectangle rect{ box.xpos, box.ypos, box.width, box.height };
 
     return rect;
@@ -387,15 +400,22 @@ DrawManager &DrawManager::Instance() {
 }
 
 void DrawManager::Add(const DrawItem &item) {
-    m_items.push_back(item);
+    switch (item.type) {
+    case DrawItemType::Texture:
+        m_textureItems.push_back(item);
+        break;
+    case DrawItemType::Font:
+        m_fontItems.push_back(item);
+        break;
+    }
 }
 
 void DrawManager::Dispatch() {
-    std::sort(m_items.begin(), m_items.end(), [](auto &lhs, auto &rhs) {
+    std::sort(m_textureItems.begin(), m_textureItems.end(), [](auto &lhs, auto &rhs) {
         return lhs.z_index < rhs.z_index;
     });
 
-    for (const auto &item : m_items) {
+    for (const auto &item : m_textureItems) {
         DrawTexturePro(item.texture,
             item.src,
             Rectangle{ item.position.x, item.position.y, item.size.x, item.size.y },
@@ -404,24 +424,29 @@ void DrawManager::Dispatch() {
             WHITE);
     }
 
-    m_items.clear();
+    for (const auto &item : m_fontItems) {
+        DrawTextEx(item.font, item.text.c_str(), item.position, item.size.x, item.spacing, item.color);
+    }
+
+    m_fontItems.clear();
+    m_textureItems.clear();
 }
 
-UIBox UIBox::Push(f32 xpos, f32 ypos, f32 w, f32 h) {
-    UIBox box{ xpos, ypos, w, h };
+View View::Push(f32 xpos, f32 ypos, f32 w, f32 h) {
+    View box{ xpos, ypos, w, h };
 
     return box;
 }
 
-void UIBox::AddPadding(f32 padding, f32 alignFactor) {
+void View::AddPadding(f32 padding, f32 alignFactor) {
     xpos += padding;
     ypos += padding;
     width = width - padding - alignFactor;
     height = height - padding - alignFactor;
 }
 
-UIBox UIBox::PushFrom(UIBox parent, f32 xpos, f32 ypos, f32 w, f32 h) {
-    UIBox box{
+View View::PushFrom(View parent, f32 xpos, f32 ypos, f32 w, f32 h) {
+    View box{
         parent.xpos + xpos,
         parent.ypos + ypos,
         w > 0 ? w : parent.width,
@@ -433,8 +458,8 @@ UIBox UIBox::PushFrom(UIBox parent, f32 xpos, f32 ypos, f32 w, f32 h) {
     return box;
 }
 
-UIBox UIBox::PushText(UIBox parent, f32 xpos, f32 ypos) {
-    UIBox box{ parent.xpos + xpos, parent.ypos + ypos, 0, 0 };
+View View::PushText(View parent, f32 xpos, f32 ypos) {
+    View box{ parent.xpos + xpos, parent.ypos + ypos, 0, 0 };
 
     box.width = std::min(box.width, parent.width);
     box.height = std::min(box.height, parent.height);
@@ -442,11 +467,11 @@ UIBox UIBox::PushText(UIBox parent, f32 xpos, f32 ypos) {
     return box;
 }
 
-UIBox UIBox::PushCentered(UIBox parent, f32 w, f32 h) {
+View View::PushCentered(View parent, f32 w, f32 h) {
     f32 xoffset = parent.width * 0.5f;
     f32 yoffset = parent.height * 0.5f;
 
-    UIBox box{
+    View box{
         parent.xpos + xoffset - w * 0.5f,
         parent.ypos + yoffset - h * 0.5f,
         w, h };

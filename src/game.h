@@ -31,8 +31,17 @@ private:
     std::vector<Collidable> m_blocks;
 };
 
+struct HUD {
+    View        container;
+    View        text;
+    int         fontId;
+
+    void Init(View root, ResHandle fontHandle);
+    void Draw();
+};
+
 struct GameState {
-    UIBox               uiRoot;
+    HUD                 hud;
     Rectangle           worldDim;
     GameObjectManager   goMgr;
     CollisionManager    collisionMgr;
@@ -40,6 +49,7 @@ struct GameState {
     Map *               map;
     GameObject *        player;
     GameObject *        ball;
+    int                 hitScore;
     Resources           res;
 };
 
@@ -62,6 +72,7 @@ private:
     Vector2                 m_origin;
 };
 
+
 class PlayerComponent : public Component {
 public:
     COMPONENT_NAME(PlayerComponent)
@@ -81,8 +92,8 @@ private:
     Vector2     m_position;
     Vector2     m_size;
     f32         m_velocity;
-    int         m_textureId;
-    Rectangle   m_textureSrc;
+    int         m_textureId = 0;
+    Rectangle   m_textureSrc = {};
 };
 
 class BallComponent : public Component {
@@ -108,12 +119,15 @@ public:
     Vector2 GetCenter() const { return { m_position.x + m_radius, m_position.y + m_radius }; }
     bool IsLaunched() const { return m_state == State::Launched; }
 private:
+    void ResolvePlayerCollision(PlayerComponent *playerComp);
+    void ResolveBlockCollision(const CollisionManifold &manifold);
+
     State   m_state;
     Vector2 m_position;
     Vector2 m_size;
     Vector2 m_velocity;
     f32     m_radius;
-    int     m_textureId;
+    int     m_textureId = 0;
 };
 
 class BlockComponent : public Component {
@@ -130,8 +144,8 @@ public:
 private:
     Vector2     m_position;
     Vector2     m_size;
-    int         m_textureId;
-    Rectangle   m_textureSrc;
+    int         m_textureId = 0;
+    Rectangle   m_textureSrc = {};
 };
 
 
@@ -143,22 +157,31 @@ PlayerComponent::PlayerComponent(f32 x, f32 y, f32 w, f32 h) {
 
 void PlayerComponent::Init() {
     m_textureId = g_state.res.Acquire("assets/tiles.png");
-    m_textureSrc = Rectangle{ 96,64, 16, 16 };
+    m_textureSrc = Rectangle{ 96, 64, 16, 16 };
 }
 
 void PlayerComponent::Tick(f32 dt) {
 
     Vector2 newPosition = m_position;
     f32 velocity = m_velocity;
+
+    f32 baseSpeed = SPEED;
+
+    if (IsKeyDown(KEY_LEFT_SHIFT)) {
+        baseSpeed *= 2.0f;
+    }
+
     if (IsKeyDown(KEY_LEFT)) {
-        velocity = SPEED * dt;
+        velocity = baseSpeed * dt;
         newPosition.x -= velocity;
     }
 
     if (IsKeyDown(KEY_RIGHT)) {
-        velocity = SPEED * dt;
+        velocity = baseSpeed * dt;
         newPosition.x += velocity;
     }
+
+
 
     if (newPosition.x >= g_state.worldDim.x && newPosition.x + m_size.x <= g_state.worldDim.width) {
         m_velocity = velocity;
@@ -223,8 +246,6 @@ void BallComponent::Tick(f32 dt) {
         }
     }
 
-
-
     Texture2D texture = g_state.res.textures[m_textureId];
     DrawItem drawItem = {};
     drawItem.position = m_position;
@@ -235,23 +256,20 @@ void BallComponent::Tick(f32 dt) {
     DrawManager::Instance().Add(drawItem);
 }
 
-void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) {
-    Vector2 norm = Vector2Normalize(manifold.diff);
-   
-    auto *playerComp = collidedObject->GetComponent<PlayerComponent>();
-    if (playerComp != nullptr) {
-        Vector2 centerPlayer = playerComp->GetCenter();
-        Vector2 centerBall = GetCenter();
-        f32 diff = centerBall.x - centerPlayer.x;
-        const f32 intensity = 2.5f;
-        f32 ratio = diff / (playerComp->GetSize().x * 0.5f);
-        Vector2 prevVelocity = m_velocity;
-        m_velocity.x = INIT_VELOCITY.x * intensity * ratio;
-        m_velocity.y = -1.0f * fabsf(m_velocity.y);
-        m_velocity = Vector2Normalize(m_velocity) * Vector2Length(prevVelocity);
-        return;
-    }
+void BallComponent::ResolvePlayerCollision(PlayerComponent *playerComp) {
+    Vector2 centerPlayer = playerComp->GetCenter();
+    Vector2 centerBall = GetCenter();
+    f32 diff = centerBall.x - centerPlayer.x;
+    const f32 intensity = 2.5f;
+    f32 ratio = diff / (playerComp->GetSize().x * 0.5f);
+    Vector2 prevVelocity = m_velocity;
+    m_velocity.x = INIT_VELOCITY.x * intensity * ratio;
+    m_velocity.y = -1.0f * fabsf(m_velocity.y);
+    m_velocity = Vector2Normalize(m_velocity) * Vector2Length(prevVelocity);
+}
 
+void BallComponent::ResolveBlockCollision(const CollisionManifold &manifold) {
+    Vector2 norm = Vector2Normalize(manifold.diff);
     Collision collision = Collision::None;
     if (Vector2DotProduct(norm, Vector2{ 0.0f, 1.0f }) > 0.0f) {
         collision = Collision::Top;
@@ -286,7 +304,18 @@ void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *c
     default:
         break;
     }
+}
 
+void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) {
+    auto *playerComp = collidedObject->GetComponent<PlayerComponent>();
+    if (playerComp != nullptr) {
+        ResolvePlayerCollision(playerComp);
+        return;
+    }
+
+    ResolveBlockCollision(manifold);
+
+    g_state.hitScore++;
 }
 
 BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
@@ -456,15 +485,38 @@ void Map::Load(u8 *data) {
     }
 }
 
+void HUD::Init(View parent, ResHandle fontHandle) {
+    container = View::PushFrom(parent, 10.0f, 20.0f, 256.0f, 128.0f);
+    text = View::PushText(container, 5.0f, 2.0f);
+    fontId = g_state.res.Acquire(fontHandle);
+}
+
+void HUD::Draw() {
+    Font font = g_state.res.fonts[fontId];
+    DrawTextEx(font,
+        TextFormat("Score: %d", g_state.hitScore),
+        Vector2{ text.xpos, text.ypos }, font.baseSize,
+        1.0f, WHITE);
+
+#if DEVELOPER
+    DrawRectangleLinesEx(Rectangle{ container.xpos, container.ypos, container.width, container.height }, 2.0f, RED);
+#endif
+
+}
+
 void Initialize() {
-    g_state.uiRoot = UIBox::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
+    View mainView = View::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
     g_state.worldDim.x = globals::appSettings.screenWidth * -0.5f;
     g_state.worldDim.y = globals::appSettings.screenHeight * -0.5f;
     g_state.worldDim.width = globals::appSettings.screenWidth * 0.5f;
     g_state.worldDim.height = globals::appSettings.screenHeight * 0.5f;
 
+    g_state.res.LoadTexture("assets/bg.png");
     g_state.res.LoadTexture("assets/tiles.png");
     g_state.res.LoadTexture("assets/doge.png");
+    auto fontHandle = g_state.res.LoadFont("assets/nicefont.ttf", 72); // probably not
+
+    g_state.hud.Init(mainView, fontHandle);
 
     g_state.goMgr.Init();
 
@@ -473,7 +525,6 @@ void Initialize() {
 
     g_state.ball = g_state.goMgr.Create();
     g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 110.0f, 64.0f, 64.0f, 32.0f);
-
 
 
     const int width = 9;
@@ -501,15 +552,19 @@ void Update(f32 dt) {
 }
 
 void Draw() {
+    int background = g_state.res.Acquire("assets/background.png");
+    DrawTextureEx(g_state.res.textures[background], Vector2{ 0, 0 }, 0.0f, 2.0f, WHITE);
+
     BeginMode2D(g_state.camera);
 
     DrawManager::Instance().Dispatch();
 
-#ifdef DEVELOPER
+#if 1
     g_state.collisionMgr.DebugDraw();
 #endif
     EndMode2D();
 
+    g_state.hud.Draw();
 }
 
 }
