@@ -20,13 +20,6 @@ class CollisionManager {
         GameObject *    go;
         Rectangle       bounds;
     };
-
-    struct Hit {
-        GameObject *ball;
-        GameObject *block;
-        CollisionManifold manifold;
-    };
-
 public:
     void AddBall(GameObject *go);
     void AddBlock(GameObject *go, Rectangle bounds);
@@ -79,12 +72,14 @@ public:
     PlayerComponent(f32 x, f32 y, f32 w, f32 h);
     void Tick(f32 dt) override;
     Vector2 GetPosition() const { return m_position; }
+    f32 GetVelocity() const { return m_velocity; }
     Vector2 GetSize() const { return m_size; }
     Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
 
 private:
     Vector2 m_position;
     Vector2 m_size;
+    f32     m_velocity;
 };
 
 class BallComponent : public Component {
@@ -93,7 +88,7 @@ class BallComponent : public Component {
         Launched
     };
 
-    static constexpr f32 SPEED = 200.0f;
+    static constexpr Vector2 INIT_VELOCITY = { 100.0f, -660.0f };
 
 public:
     COMPONENT_NAME(BallComponent)
@@ -141,15 +136,19 @@ PlayerComponent::PlayerComponent(f32 x, f32 y, f32 w, f32 h) {
 void PlayerComponent::Tick(f32 dt) {
 
     Vector2 newPosition = m_position;
+    f32 velocity = m_velocity;
     if (IsKeyDown(KEY_LEFT)) {
-        newPosition.x -= SPEED * dt;
+        velocity = SPEED * dt;
+        newPosition.x -= velocity;
     }
 
     if (IsKeyDown(KEY_RIGHT)) {
-        newPosition.x += SPEED * dt;
+        velocity = SPEED * dt;
+        newPosition.x += velocity;
     }
 
     if (newPosition.x >= g_state.worldDim.x && newPosition.x + m_size.x <= g_state.worldDim.width) {
+        m_velocity = velocity;
         m_position = newPosition;
     }
     
@@ -170,7 +169,7 @@ void PlayerComponent::Tick(f32 dt) {
 BallComponent::BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r) {
     m_position = { x, y };
     m_size = { w, h };
-    m_velocity = { x + 100.0f, -y };
+    m_velocity = INIT_VELOCITY;
     m_radius = r;
     m_state = State::Attached;
 }
@@ -203,7 +202,7 @@ void BallComponent::Tick(f32 dt) {
 
         if (m_position.y <= g_state.worldDim.y) {
             m_velocity.y = -m_velocity.y;
-            m_position.y = g_state.worldDim.y + m_size.y;
+            m_position.y = g_state.worldDim.y;
         }
     }
 
@@ -219,6 +218,20 @@ void BallComponent::Tick(f32 dt) {
 void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) {
     Vector2 norm = Vector2Normalize(manifold.diff);
    
+    auto *playerComp = collidedObject->GetComponent<PlayerComponent>();
+    if (playerComp != nullptr) {
+        Vector2 centerPlayer = playerComp->GetCenter();
+        Vector2 centerBall = GetCenter();
+        f32 diff = centerBall.x - centerPlayer.x;
+        const f32 intensity = 2.5f;
+        f32 ratio = diff / (playerComp->GetSize().x * 0.5f);
+        Vector2 prevVelocity = m_velocity;
+        m_velocity.x = INIT_VELOCITY.x * intensity * ratio;
+        m_velocity.y = -1.0f * fabsf(m_velocity.y);
+        m_velocity = Vector2Normalize(m_velocity) * Vector2Length(prevVelocity);
+        return;
+    }
+
     Collision collision = Collision::None;
     if (Vector2DotProduct(norm, Vector2{ 0.0f, 1.0f }) > 0.0f) {
         collision = Collision::Top;
@@ -232,7 +245,6 @@ void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *c
     else if (Vector2DotProduct(norm, Vector2{ -1.0f, 0.0f }) > 0.0f) {
         collision = Collision::Left;
     }
-
     switch (collision) {
     case Collision::Top:
         m_position.y -= manifold.penetration;
@@ -335,7 +347,6 @@ void CollisionManager::Tick() {
         }
     }
 
-    std::vector<Hit> hitInfo;
     //2nd test - dynamic bounds vs static bounds
     for (auto &ball : m_balls) {
         BallComponent *ballComp = ball.go->GetComponent<BallComponent>();
@@ -349,18 +360,12 @@ void CollisionManager::Tick() {
             CollisionManifold manifold = AABBvsCircle(aabb, circle);
 
             if (manifold.collides) {
+                BlockComponent *blockComp = block.go->GetComponent<BlockComponent>();
                 ballComp->OnCollision(manifold, block.go);
-                hitInfo.emplace_back(Hit{ball.go, block.go, manifold});
+                blockComp->OnCollision(manifold, ball.go);
+                g_state.goMgr.Destroy(block.go);
+                break;
             }
-        }
-    }
-
-    // post processing
-    for (auto &hit : hitInfo) {
-        BlockComponent *blockComp = hit.block->GetComponent<BlockComponent>();
-        if (blockComp) {
-            blockComp->OnCollision(hit.manifold, hit.ball);
-            g_state.goMgr.Destroy(hit.block);
         }
     }
 }
@@ -440,7 +445,7 @@ void Initialize() {
     g_state.player->AddComponent<PlayerComponent>(-16.0f, globals::appSettings.screenHeight - 40.0f, 128.0f, 32.0f);
 
     g_state.ball = g_state.goMgr.Create();
-    g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 100.0f, 64.0f, 64.0f, 32.0f);
+    g_state.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 110.0f, 64.0f, 64.0f, 32.0f);
 
     g_state.texture = LoadTexture("assets/tiles.png");
     g_state.ballTexture = LoadTexture("assets/doge.png");
