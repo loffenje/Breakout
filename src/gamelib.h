@@ -149,7 +149,7 @@ public:
     void    Tick(f32 dt);
     GameObject *Create();
     void    Destroy(GameObject *go);
-
+    int GetIndex(GameObject *go) const;
     GameObjectManager(const GameObjectManager &other) = delete;
     GameObjectManager &operator=(const GameObjectManager &other) = delete;
 
@@ -214,8 +214,8 @@ template <typename T, typename... Args>
 void GameObject::AddComponent(Args &&...args) {
     Component *comp = m_arena.Push<T>(std::forward<Args>(args)...);
 
-    comp->Init();
     comp->SetOwner(this);
+    comp->Init();
 
     m_components.push_back(comp);
 }
@@ -275,18 +275,25 @@ void GameObjectManager::Tick(f32 dt) {
     }
 }
 
+int GameObjectManager::GetIndex(GameObject *go) const {
+    int idx = 0;
+    for (int i = 0; i < m_gos.size(); ++i) {
+        if (go->GetId() == m_gos[i]->GetId()) {
+            idx = i;
+            break;
+        }
+    }
+
+    return idx;
+}
+
 void GameObjectManager::Destroy(GameObject *go) {
     go->SetNext(m_firstFree);
     m_firstFree = go;
 
     u32 goId = go->GetId();
 
-    int destroyIdx = 0;
-    for (int i = 0; i < m_gos.size(); ++i) {
-        if (go->GetId() == m_gos[i]->GetId()) {
-            destroyIdx = i;
-        }
-    }
+    int destroyIdx = GetIndex(go);
 
     RemoveByIndex(m_gos, destroyIdx);
 }

@@ -20,9 +20,17 @@ class CollisionManager {
         GameObject *    go;
         Rectangle       bounds;
     };
+
+    struct Hit {
+        GameObject *ball;
+        GameObject *block;
+        CollisionManifold manifold;
+    };
+
 public:
     void AddBall(GameObject *go);
     void AddBlock(GameObject *go, Rectangle bounds);
+    void RemoveBlock(GameObject *go);
     void Tick();
     void DebugDraw();
 private:
@@ -113,12 +121,12 @@ public:
     COMPONENT_NAME(BlockComponent)
 
     BlockComponent(f32 x, f32 y, f32 width, f32 height);
-
+    void Init() override;
     void Tick(f32) override;
     Vector2 GetPosition() const { return m_position; }
     Vector2 GetSize() const { return m_size; }
     Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
-
+    void OnCollision(const CollisionManifold &manifold, GameObject *go);
 private:
     Vector2 m_position;
     Vector2 m_size;
@@ -252,7 +260,9 @@ void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *c
 BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
     m_position = { x, y };
     m_size = { width, height };
+}
 
+void BlockComponent::Init() {
     Vector2 center = GetCenter();
     Vector2 halfSize = { m_size.x * 0.5f, m_size.y * 0.5f };
     g_state.collisionMgr.AddBlock(m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
@@ -268,12 +278,33 @@ void BlockComponent::Tick(f32) {
     DrawManager::Instance().Add(drawItem);
 }
 
+void BlockComponent::OnCollision(const CollisionManifold &manifold, GameObject *go) {
+    g_state.collisionMgr.RemoveBlock(m_go);
+}
+
 void CollisionManager::AddBlock(GameObject *go, Rectangle bounds) {
     m_blocks.emplace_back(Collidable{go, bounds});
 }
 
 void CollisionManager::AddBall(GameObject *go) {
     m_balls.push_back(Collidable{ go, Rectangle{} });
+}
+
+void CollisionManager::RemoveBlock(GameObject *go) {
+    if (m_blocks.empty()) {
+        return;
+    }
+
+    // don't care about sorting, should be faster than erase/remove
+    int destroyIdx = 0;
+    for (int i = 0; i < m_blocks.size(); ++i) {
+        if (go->GetId() == m_blocks[i].go->GetId()) {
+            destroyIdx = i;
+            break;
+        }
+    }
+
+    RemoveByIndex(m_blocks, destroyIdx);
 }
 
 void CollisionManager::Tick() {
@@ -304,8 +335,9 @@ void CollisionManager::Tick() {
         }
     }
 
+    std::vector<Hit> hitInfo;
     //2nd test - dynamic bounds vs static bounds
-    for (auto ball : m_balls) {
+    for (auto &ball : m_balls) {
         BallComponent *ballComp = ball.go->GetComponent<BallComponent>();
         Vector2 center = { ball.bounds.x, ball.bounds.y };
         f32 radius = ball.bounds.width;
@@ -318,7 +350,17 @@ void CollisionManager::Tick() {
 
             if (manifold.collides) {
                 ballComp->OnCollision(manifold, block.go);
+                hitInfo.emplace_back(Hit{ball.go, block.go, manifold});
             }
+        }
+    }
+
+    // post processing
+    for (auto &hit : hitInfo) {
+        BlockComponent *blockComp = hit.block->GetComponent<BlockComponent>();
+        if (blockComp) {
+            blockComp->OnCollision(hit.manifold, hit.ball);
+            g_state.goMgr.Destroy(hit.block);
         }
     }
 }
@@ -433,7 +475,7 @@ void Draw() {
     DrawManager::Instance().Dispatch();
 
 #ifdef DEVELOPER
-    //g_state.collisionMgr.DebugDraw();
+    g_state.collisionMgr.DebugDraw();
 #endif
     EndMode2D();
 
