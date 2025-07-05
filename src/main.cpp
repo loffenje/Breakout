@@ -12,16 +12,19 @@ int main() {
 #if DEVELOPER
     globals::appSettings.windowWidth = 1920;
     globals::appSettings.windowHeight = 1080;
+    InitWindow(globals::appSettings.windowWidth, globals::appSettings.windowHeight, globals::appSettings.name);
 #else
     int monitor = GetCurrentMonitor();
     globals::appSettings.windowWidth = GetMonitorWidth(monitor);
     globals::appSettings.windowHeight = GetMonitorHeight(monitor);
+    InitWindow(globals::appSettings.windowWidth, globals::appSettings.windowHeight, globals::appSettings.name);
+    ToggleFullscreen();
 #endif
 
-    InitWindow(globals::appSettings.windowWidth, globals::appSettings.windowHeight, globals::appSettings.name);
     SetWindowMinSize(640, 480);
     SetExitKey(0);
     SetTargetFPS(120);
+    DisableCursor();
 
     if (!IsWindowReady()) {
         TraceLog(LOG_ERROR, "Window initialization is failed!");

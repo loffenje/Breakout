@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <type_traits>
 
-#define DEVELOPER 0
+#define DEVELOPER 1
 
 using f64 = double;
 using f32 = float;

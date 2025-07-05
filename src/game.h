@@ -60,6 +60,7 @@ struct Menu {
     };
 
     View                                view;
+    View                                title;
     Buffer<View, MAX_SIZE>              stack;
     Buffer<const char *, MAX_SIZE>      texts;
     Buffer<int, MAX_SIZE>               options;
@@ -73,8 +74,9 @@ struct Menu {
         texts.Clear();
         options.Clear();
 
-        view = View::PushCentered(parent, 300.0f, 300.0f);
-        
+        view = View::PushCentered(parent, 200.0f, 200.0f);
+        title = View::PushText(parent, 100.0f, 100.0f);
+
         const f32 offset = 5.0f;
 
         stack.Add(View::PushFrom(view, 0, offset, 0.0f, 100.0f));
@@ -641,6 +643,7 @@ void Initialize() {
     g_gameState.camera.rotation = 0.0f;
     g_gameState.camera.zoom = 1.0f;
 
+    g_gameState.res.LoadTexture("assets/menu_bg.png");
     g_gameState.res.LoadTexture("assets/bg.png");
     g_gameState.res.LoadTexture("assets/tiles.png");
     g_gameState.res.LoadTexture("assets/doge.png");
@@ -778,7 +781,7 @@ void Update(f32 dt, bool &exitRequested) {
 static
 void DrawGame() {
 
-    int background = g_gameState.res.Acquire("assets/background.png");
+    int background = g_gameState.res.Acquire("assets/bg.png");
     DrawTextureEx(g_gameState.res.textures[background], Vector2{ 0, 0 }, 0.0f, 1.0f, WHITE);
 
     BeginMode2D(g_gameState.camera);
@@ -808,13 +811,22 @@ void DrawGame() {
 
 static
 void DrawMenu() {
+    int background = g_gameState.res.Acquire("assets/menu_bg.png");
+    DrawTextureEx(g_gameState.res.textures[background], Vector2{ 0, 0 }, 0.0f, 1.0f, WHITE);
+
     int fontId = g_gameState.res.Acquire("assets/nicefont.ttf");
     Font font = g_gameState.res.fonts[fontId];
+
+    
+    DrawTextEx(font,
+        "Breakout 0.1",
+        Vector2{ g_gameState.menu.title.xpos, g_gameState.menu.title.ypos }, font.baseSize,
+        1.0f, WHITE);
 
     for (int i = 0; i < g_gameState.menu.GetOptionsLen(); ++i) {
         Color highlightColor = WHITE;
         if (g_gameState.menu.selectedOption == g_gameState.menu.options[i]) {
-            highlightColor = DARKBLUE;
+            highlightColor = MAGENTA;
         }
         View view = g_gameState.menu.stack[i];
         DrawTextEx(font,
