@@ -45,8 +45,10 @@ struct HUD {
 enum class GameplayState {
     RunGame,
     RunMenu,
+    PreGameWin,
     PreGameOver,
     GameOver,
+    GameWin,
     Quit
 };
 
@@ -127,7 +129,7 @@ struct GameState {
     int                 hitScore;
     Resources           res;
     RecordedDrawItems   recordedDrawings;
-    f32                 gameoverStartTime;
+    f32                 resetTimer;
 };
 
 static GameState g_gameState;
@@ -138,6 +140,7 @@ public:
 
     inline int GetWidth() const { return m_width; }
     inline int GetHeight() const { return m_height; }
+    inline int GetBlocksNum() const { return m_blocksNum; }
     Rectangle GetBounds() const;
     Vector2 GetOrigin() const;
     Vector2 GetTileSize() const { return m_tileSize; }
@@ -145,6 +148,7 @@ public:
 private:
     int                     m_width = 0;
     int                     m_height = 0;
+    int                     m_blocksNum = 0;
     Vector2                 m_tileSize;
     Vector2                 m_origin;
 };
@@ -561,6 +565,7 @@ void Map::Load(u8 *data) {
             if (!isTileEmpty) {
                 GameObject *tile = g_gameState.goMgr.Create();
                 tile->AddComponent<BlockComponent>(xoffset, yoffset, m_tileSize.x, m_tileSize.y);
+                m_blocksNum++;
            }
            xoffset += m_tileSize.x + padding;
         }
@@ -597,8 +602,9 @@ void DestroyScene() {
     g_gameState.hitScore = 0;
     g_gameState.recordedDrawings.textureItems.clear();
     g_gameState.recordedDrawings.fontItems.clear();
-    g_gameState.gameoverStartTime = 0;
+    g_gameState.resetTimer = 0;
     g_gameState.collisionMgr.Clear();
+    g_gameState.gameplayState = GameplayState::RunMenu;
 }
 
 static
@@ -613,9 +619,9 @@ void InitScene() {
     const int width = 9;
     const int height = 3;
     u8 tiles[width * height] = {
-        1, 1, 1, 1, 1, 1, 0, 1, 1,
-        1, 0, 0, 0, 1, 1, 0, 1, 1,
-        0, 0, 1, 1, 0, 0, 1, 1, 1,
+        0, 1, 1, 0, 0, 0, 1, 1, 0,
+        0, 1, 1, 1, 1, 1, 1, 1, 0,
+        1, 1, 1, 1, 0, 0, 1, 1, 0,
     };
 
     Vector2 originMap = { g_gameState.worldDim.x + 200.0f, g_gameState.worldDim.y + 400.0f };
@@ -651,6 +657,28 @@ void Initialize() {
 }
 
 static
+void PostGameResultMessage(const std::string &text, Color color) {
+    f32 currTime = GetTime();
+    if (currTime - g_gameState.resetTimer > GAME_RESET_DIFF) {
+        DestroyScene();
+        InitScene();
+    }
+
+    DrawItem item;
+    item.type = DrawItemType::Font;
+    item.position = { g_gameState.worldDim.x + 200.0f, g_gameState.worldDim.y + 200.0f };
+    item.font = g_gameState.res.fonts[g_gameState.res.Acquire("assets/nicefont.ttf")];
+    item.spacing = 1.0f;
+    item.size = Vector2{ 144.0f, 144.0f };
+    item.text = text;
+
+    item.color = color;
+
+    DrawManager::Instance().Copy(g_gameState.recordedDrawings);
+    DrawManager::Instance().Add(item);
+}
+
+static
 void UpdateGame(f32 dt) {
     switch (g_gameState.gameplayState) {
     case GameplayState::RunGame:
@@ -660,39 +688,50 @@ void UpdateGame(f32 dt) {
 
         g_gameState.goMgr.Tick(dt);
         g_gameState.collisionMgr.Tick();
+
+        if (g_gameState.map->GetBlocksNum() == g_gameState.hitScore) {
+            g_gameState.gameplayState = GameplayState::PreGameWin;
+        }
+
         break;
     case GameplayState::GameOver: {
 
         f32 currTime = GetTime();
-        if (currTime - g_gameState.gameoverStartTime > GAME_RESET_DIFF) {
+        if (currTime - g_gameState.resetTimer > GAME_RESET_DIFF) {
             DestroyScene();
             InitScene();
-            g_gameState.gameplayState = GameplayState::RunMenu;
             break;
         }
 
-        DrawItem item;
-        item.type = DrawItemType::Font;
-        item.position = { g_gameState.worldDim.x + 200.0f, g_gameState.worldDim.y + 200.0f };
-        item.font = g_gameState.res.fonts[g_gameState.res.Acquire("assets/nicefont.ttf")];
-        item.spacing = 1.0f;
-        item.size = Vector2{ 144.0f, 144.0f };
-        item.text = R"(
+        PostGameResultMessage(R"(
                 Critical
-                failure)";
+                failure)", RED);
 
-        item.color = RED;
+        break;
+    }
+    case GameplayState::GameWin: {
+        f32 currTime = GetTime();
+        if (currTime - g_gameState.resetTimer > GAME_RESET_DIFF) {
+            DestroyScene();
+            InitScene();
+            break;
+        }
 
-        DrawManager::Instance().Copy(g_gameState.recordedDrawings);
-        DrawManager::Instance().Add(item);
+        PostGameResultMessage(R"(
+                Critical
+                success)", WHITE);
 
         break;
     }
     case GameplayState::PreGameOver:
         DrawManager::Instance().Record(g_gameState.recordedDrawings);
-        g_gameState.gameoverStartTime = GetTime();
+        g_gameState.resetTimer = GetTime();
         g_gameState.gameplayState = GameplayState::GameOver;
         break;
+    case GameplayState::PreGameWin:
+        DrawManager::Instance().Record(g_gameState.recordedDrawings);
+        g_gameState.resetTimer = GetTime();
+        g_gameState.gameplayState = GameplayState::GameWin;
     }
 }
 
@@ -722,7 +761,9 @@ void Update(f32 dt, bool &exitRequested) {
 
     if (g_gameState.gameplayState == GameplayState::RunGame || 
         g_gameState.gameplayState == GameplayState::PreGameOver ||
-        g_gameState.gameplayState == GameplayState::GameOver) {
+        g_gameState.gameplayState == GameplayState::PreGameWin ||
+        g_gameState.gameplayState == GameplayState::GameOver ||
+        g_gameState.gameplayState == GameplayState::GameWin) {
         UpdateGame(dt);
     }
     else if (g_gameState.gameplayState == GameplayState::RunMenu) {
@@ -744,10 +785,12 @@ void DrawGame() {
 
     switch (g_gameState.gameplayState) {
     case GameplayState::PreGameOver:
+    case GameplayState::PreGameWin:
         DrawManager::Instance().Dispatch();
         break;
     case GameplayState::RunGame:
     case GameplayState::GameOver:
+    case GameplayState::GameWin:
         DrawManager::Instance().Dispatch();
         DrawManager::Instance().Flush();
         break;
@@ -786,7 +829,9 @@ void Draw() {
 
     if (g_gameState.gameplayState == GameplayState::RunGame || 
         g_gameState.gameplayState == GameplayState::PreGameOver ||
-        g_gameState.gameplayState == GameplayState::GameOver) {
+        g_gameState.gameplayState == GameplayState::PreGameWin ||
+        g_gameState.gameplayState == GameplayState::GameOver ||
+        g_gameState.gameplayState == GameplayState::GameWin) {
          DrawGame();
     }
     else {
