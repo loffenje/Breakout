@@ -6,6 +6,7 @@
 #include <string.h>
 #include <string>
 #include <algorithm>
+#include <type_traits>
 
 #define DEVELOPER 1
 
@@ -45,6 +46,8 @@ struct Buffer {
     T   data[N];
     u32 len = 0;
 
+    static_assert(std::is_trivially_copyable<T>::value &&std::is_standard_layout<T>::value, "T must be a POD-like type");
+
     Buffer() {
         memset(data, 0, sizeof(data));
     }
@@ -58,10 +61,15 @@ struct Buffer {
     }
 
     int Add(const T &item) {
-        assert(len + 1 < N);
+        assert(len < N);
         data[len++] = item;
 
         return len - 1;
+    }
+
+    void Clear() {
+        memset(data, 0, sizeof(data));
+        len = 0;
     }
 };
 

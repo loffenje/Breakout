@@ -26,6 +26,7 @@ public:
     void RemoveBlock(GameObject *go);
     void Tick();
     void DebugDraw();
+    void Clear();
 private:
     std::vector<Collidable> m_balls;
     std::vector<Collidable> m_blocks;
@@ -44,63 +45,73 @@ struct HUD {
 enum class GameplayState {
     RunGame,
     RunMenu,
-    PauseMenu,
+    PreGameOver,
     GameOver,
     Quit
 };
 
 struct Menu {
     enum : int {
-        START_GAME = 0,
-        RESUME,
+        PLAY = 0,
         QUIT,
         MAX_SIZE
     };
 
-    View view;
-    View stack[MAX_SIZE];
-
-    std::string texts[MAX_SIZE] = {
-        "Start game",
-        "Resume",
-        "Quit"
-    };
-
-    int options[MAX_SIZE] = {
-        START_GAME,
-        RESUME,
-        QUIT
-    };
-
+    View                                view;
+    Buffer<View, MAX_SIZE>              stack;
+    Buffer<const char *, MAX_SIZE>      texts;
+    Buffer<int, MAX_SIZE>               options;
+   
     int cursor = 0;
-    int option = 0;
+    int selectedOption = 0;
 
-    void Init(View parent) {
-        view = View::PushCentered(parent, 400.0f, -400.0f);
-        f32 offset = 5.0f;
-        for (int i = 0; i < MAX_SIZE; ++i) {
-            stack[i] = View::PushFrom(view, 0, offset, 0.0f, 100.0f);
-            offset += 100.0f;
-        }
+    void InitStartMenu(View parent) {
+
+        stack.Clear();
+        texts.Clear();
+        options.Clear();
+
+        view = View::PushCentered(parent, 300.0f, 300.0f);
+        
+        const f32 offset = 5.0f;
+
+        stack.Add(View::PushFrom(view, 0, offset, 0.0f, 100.0f));
+        stack.Add(View::PushFrom(view, 0, offset + 100.0f, 0.0f, 100.0f));
+
+        texts.Add("Play");
+        texts.Add("Quit");
+
+        options.Add(PLAY);
+        options.Add(QUIT);
+    }
+
+    int GetOptionsLen() const {
+        return options.len;
     }
 
     void Up() {
+        assert(options.len == stack.len);
+        
         cursor--;
         if (cursor < 0) {
-            cursor = MAX_SIZE - 1;
+            cursor = stack.len - 1;
         }
 
-        option = options[cursor];
+        selectedOption = options[cursor];
     }
 
     void Down() {
+        assert(options.len == stack.len);
+        
         cursor++;
-        if (cursor > MAX_SIZE - 1) {
+        if (cursor > stack.len - 1) {
             cursor = 0;
         }
-        option = options[cursor];
+        selectedOption = options[cursor];
     }
 };
+
+static constexpr f32 GAME_RESET_DIFF = 2.0f;
 
 struct GameState {
     GameplayState       gameplayState;
@@ -115,6 +126,8 @@ struct GameState {
     GameObject *        ball;
     int                 hitScore;
     Resources           res;
+    RecordedDrawItems   recordedDrawings;
+    f32                 gameoverStartTime;
 };
 
 static GameState g_gameState;
@@ -305,6 +318,10 @@ void BallComponent::Tick(f32 dt) {
         if (m_position.y <= g_gameState.worldDim.y) {
             m_velocity.y = -m_velocity.y;
             m_position.y = g_gameState.worldDim.y;
+        }
+
+        if (m_position.y > g_gameState.worldDim.height) {
+            g_gameState.gameplayState = GameplayState::PreGameOver;
         }
     }
 
@@ -502,6 +519,11 @@ void CollisionManager::DebugDraw() {
     }
 }
 
+void CollisionManager::Clear() {
+    m_balls.clear();
+    m_blocks.clear();
+}
+
 Map::Map(Vector2 origin, Vector2 tileSize, int width, int height) :
     m_origin{ origin },
     m_tileSize{ tileSize },
@@ -566,28 +588,27 @@ void HUD::Draw() {
 
 }
 
-void Initialize() {
-    View mainView = View::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
-    g_gameState.worldDim.x = globals::appSettings.screenWidth * -0.5f;
-    g_gameState.worldDim.y = globals::appSettings.screenHeight * -0.5f;
-    g_gameState.worldDim.width = globals::appSettings.screenWidth * 0.5f;
-    g_gameState.worldDim.height = globals::appSettings.screenHeight * 0.5f;
+static
+void DestroyScene() {
+    g_gameState.goMgr.Destroy();
+    delete g_gameState.map;
+    g_gameState.player = nullptr;
+    g_gameState.ball = nullptr;
+    g_gameState.hitScore = 0;
+    g_gameState.recordedDrawings.textureItems.clear();
+    g_gameState.recordedDrawings.fontItems.clear();
+    g_gameState.gameoverStartTime = 0;
+    g_gameState.collisionMgr.Clear();
+}
 
-    g_gameState.res.LoadTexture("assets/bg.png");
-    g_gameState.res.LoadTexture("assets/tiles.png");
-    g_gameState.res.LoadTexture("assets/doge.png");
-    auto fontHandle = g_gameState.res.LoadFont("assets/nicefont.ttf", 72); // probably not
-
-    g_gameState.hud.Init(mainView, fontHandle);
-
-    g_gameState.goMgr.Init();
+static
+void InitScene() {
 
     g_gameState.player = g_gameState.goMgr.Create();
-    g_gameState.player->AddComponent<PlayerComponent>(-16.0f, globals::appSettings.screenHeight - 40.0f, 128.0f, 32.0f);
+    g_gameState.player->AddComponent<PlayerComponent>(-16.0f, g_gameState.worldDim.height - 40.0f, 128.0f, 32.0f);
 
     g_gameState.ball = g_gameState.goMgr.Create();
-    g_gameState.ball->AddComponent<BallComponent>(0.0f, globals::appSettings.screenHeight - 110.0f, 64.0f, 64.0f, 32.0f);
-
+    g_gameState.ball->AddComponent<BallComponent>(0.0f, g_gameState.worldDim.height - 110.0f, 64.0f, 64.0f, 32.0f);
 
     const int width = 9;
     const int height = 3;
@@ -597,27 +618,80 @@ void Initialize() {
         0, 0, 1, 1, 0, 0, 1, 1, 1,
     };
 
-    g_gameState.camera.offset = {globals::appSettings.screenWidth * 0.5f, globals::appSettings.screenHeight * 0.5f};
-    g_gameState.camera.target = {0,0};
+    Vector2 originMap = { g_gameState.worldDim.x + 200.0f, g_gameState.worldDim.y + 400.0f };
+    g_gameState.map = new Map(originMap, Vector2{ 128, 64 }, width, height);
+    g_gameState.map->Load(tiles);
+}
+
+void Initialize() {
+    View mainView = View::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
+    g_gameState.worldDim.x = globals::appSettings.screenWidth * -0.5f;
+    g_gameState.worldDim.y = globals::appSettings.screenHeight * -0.5f;
+    g_gameState.worldDim.width = globals::appSettings.screenWidth * 0.5f;
+    g_gameState.worldDim.height = globals::appSettings.screenHeight * 0.5f;
+    
+    g_gameState.camera.offset = { globals::appSettings.screenWidth * 0.5f, globals::appSettings.screenHeight * 0.5f };
+    g_gameState.camera.target = { 0,0 };
     g_gameState.camera.rotation = 0.0f;
     g_gameState.camera.zoom = 1.0f;
 
-    Vector2 originMap = { -globals::appSettings.screenWidth * 0.3f, 500.0f };
-    g_gameState.map = new Map(originMap, Vector2{ 128, 64 }, width, height);
-    g_gameState.map->Load(tiles);
+    g_gameState.res.LoadTexture("assets/bg.png");
+    g_gameState.res.LoadTexture("assets/tiles.png");
+    g_gameState.res.LoadTexture("assets/doge.png");
+    
+    auto fontHandle = g_gameState.res.LoadFont("assets/nicefont.ttf", 72); // probably not
+
+    g_gameState.hud.Init(mainView, fontHandle);
+    g_gameState.goMgr.Init();
+
+    InitScene();
 
     g_gameState.gameplayState = GameplayState::RunMenu;
-    g_gameState.menu.Init(mainView);
+    g_gameState.menu.InitStartMenu(mainView);
 }
 
 static
 void UpdateGame(f32 dt) {
     switch (g_gameState.gameplayState) {
     case GameplayState::RunGame:
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            g_gameState.gameplayState = GameplayState::RunMenu;
+        }
+
         g_gameState.goMgr.Tick(dt);
         g_gameState.collisionMgr.Tick();
         break;
-    case GameplayState::GameOver:
+    case GameplayState::GameOver: {
+
+        f32 currTime = GetTime();
+        if (currTime - g_gameState.gameoverStartTime > GAME_RESET_DIFF) {
+            DestroyScene();
+            InitScene();
+            g_gameState.gameplayState = GameplayState::RunMenu;
+            break;
+        }
+
+        DrawItem item;
+        item.type = DrawItemType::Font;
+        item.position = { g_gameState.worldDim.x + 200.0f, g_gameState.worldDim.y + 200.0f };
+        item.font = g_gameState.res.fonts[g_gameState.res.Acquire("assets/nicefont.ttf")];
+        item.spacing = 1.0f;
+        item.size = Vector2{ 144.0f, 144.0f };
+        item.text = R"(
+                Critical
+                failure)";
+
+        item.color = RED;
+
+        DrawManager::Instance().Copy(g_gameState.recordedDrawings);
+        DrawManager::Instance().Add(item);
+
+        break;
+    }
+    case GameplayState::PreGameOver:
+        DrawManager::Instance().Record(g_gameState.recordedDrawings);
+        g_gameState.gameoverStartTime = GetTime();
+        g_gameState.gameplayState = GameplayState::GameOver;
         break;
     }
 }
@@ -633,8 +707,8 @@ void UpdateMenu() {
     }
 
     if (IsKeyPressed(KEY_ENTER)) {
-        switch (g_gameState.menu.option) {
-        case Menu::START_GAME: 
+        switch (g_gameState.menu.selectedOption) {
+        case Menu::PLAY: 
             g_gameState.gameplayState = GameplayState::RunGame;
             break;
         case Menu::QUIT:
@@ -646,10 +720,12 @@ void UpdateMenu() {
 
 void Update(f32 dt, bool &exitRequested) {
 
-    if (g_gameState.gameplayState == GameplayState::RunGame || g_gameState.gameplayState == GameplayState::GameOver) {
+    if (g_gameState.gameplayState == GameplayState::RunGame || 
+        g_gameState.gameplayState == GameplayState::PreGameOver ||
+        g_gameState.gameplayState == GameplayState::GameOver) {
         UpdateGame(dt);
     }
-    else if (g_gameState.gameplayState == GameplayState::RunMenu || g_gameState.gameplayState == GameplayState::PauseMenu) {
+    else if (g_gameState.gameplayState == GameplayState::RunMenu) {
         UpdateMenu();
     }
     else {
@@ -660,27 +736,31 @@ void Update(f32 dt, bool &exitRequested) {
 
 static
 void DrawGame() {
+
+    int background = g_gameState.res.Acquire("assets/background.png");
+    DrawTextureEx(g_gameState.res.textures[background], Vector2{ 0, 0 }, 0.0f, 1.0f, WHITE);
+
+    BeginMode2D(g_gameState.camera);
+
     switch (g_gameState.gameplayState) {
-    case GameplayState::RunGame: {
-        int background = g_gameState.res.Acquire("assets/background.png");
-        DrawTextureEx(g_gameState.res.textures[background], Vector2{ 0, 0 }, 0.0f, 2.0f, WHITE);
-
-        BeginMode2D(g_gameState.camera);
-
+    case GameplayState::PreGameOver:
         DrawManager::Instance().Dispatch();
+        break;
+    case GameplayState::RunGame:
+    case GameplayState::GameOver:
+        DrawManager::Instance().Dispatch();
+        DrawManager::Instance().Flush();
+        break;
+    }
 
-#if 1
-        g_gameState.collisionMgr.DebugDraw();
+#if DEVELOPER
+    g_gameState.collisionMgr.DebugDraw();
 #endif
-        EndMode2D();
 
-        g_gameState.hud.Draw();
-        break;
-    }
-    case GameplayState::GameOver: {
-        break;
-    }
-    }
+    EndMode2D();
+
+    g_gameState.hud.Draw();
+
 }
 
 static
@@ -688,14 +768,14 @@ void DrawMenu() {
     int fontId = g_gameState.res.Acquire("assets/nicefont.ttf");
     Font font = g_gameState.res.fonts[fontId];
 
-    for (int i = 0; i < Menu::MAX_SIZE; ++i) {
+    for (int i = 0; i < g_gameState.menu.GetOptionsLen(); ++i) {
         Color highlightColor = WHITE;
-        if (g_gameState.menu.option == i) {
+        if (g_gameState.menu.selectedOption == g_gameState.menu.options[i]) {
             highlightColor = DARKBLUE;
         }
         View view = g_gameState.menu.stack[i];
         DrawTextEx(font,
-            g_gameState.menu.texts[i].c_str(),
+            g_gameState.menu.texts[i],
             Vector2{ view.xpos, view.ypos }, font.baseSize,
             1.0f, highlightColor);
     }
@@ -704,8 +784,10 @@ void DrawMenu() {
 
 void Draw() {
 
-    if (g_gameState.gameplayState == GameplayState::RunGame || g_gameState.gameplayState == GameplayState::GameOver) {
-        DrawGame();
+    if (g_gameState.gameplayState == GameplayState::RunGame || 
+        g_gameState.gameplayState == GameplayState::PreGameOver ||
+        g_gameState.gameplayState == GameplayState::GameOver) {
+         DrawGame();
     }
     else {
         DrawMenu();

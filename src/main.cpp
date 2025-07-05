@@ -31,7 +31,7 @@ int main() {
     globals::appSettings.screenWidth = 1920;
     globals::appSettings.screenHeight = 1080;
 
-    RenderTexture2D target = LoadRenderTexture(globals::appSettings.screenWidth, globals::appSettings.screenWidth);
+    RenderTexture2D target = LoadRenderTexture(globals::appSettings.screenWidth, globals::appSettings.screenHeight);
 
     breakout::Initialize();
 

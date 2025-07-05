@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "memory_arena.h"
+#include <iterator>
 #include <vector>
 #include <unordered_map>
 
@@ -164,13 +165,20 @@ struct DrawItem {
     int             z_index = 0;
 };
 
+struct RecordedDrawItems {
+    std::vector<DrawItem>    textureItems;
+    std::vector<DrawItem>    fontItems;
+};
+
 class DrawManager {
 public:
     static DrawManager &Instance();
 
     void Add(const DrawItem &item);
     void Dispatch();
-
+    void Flush();
+    void Record(RecordedDrawItems &record);
+    void Copy(const RecordedDrawItems &record);
     DrawManager(const DrawManager &other) = delete;
     DrawManager &operator=(const DrawManager &other) = delete;
 
@@ -205,10 +213,11 @@ static const char *ClassName() {                                                
 class GameObject {
 public:
     GameObject() = default;
-    ~GameObject();
+    ~GameObject() = default;
 
     void Init();
     void Clear();
+    void Destroy();
 
     GameObject(const GameObject &other) = delete;
     GameObject &operator=(const GameObject &other) = delete;
@@ -241,6 +250,7 @@ public:
     GameObjectManager() = default;
 
     void    Init();
+    void    Destroy();
     void    Tick(f32 dt);
     GameObject *Create();
     void    Destroy(GameObject *go);
@@ -278,14 +288,10 @@ Rectangle UIBox2Rectangle(View box) {
     return rect;
 }
 
-GameObject::~GameObject() {
-    free(m_memory);
-}
-
 void GameObject::Init() {
     const size_t capacity = 1024;
     m_memory = (u8 *)malloc(capacity);
-    m_arena.Init(capacity * 2, m_memory);
+    m_arena.Init(capacity, m_memory);
     m_components.reserve(capacity);
 }
 
@@ -326,6 +332,12 @@ T *GameObject::GetComponent() const {
     return nullptr;
 }
 
+void GameObject::Destroy() {
+    free(m_memory);
+
+    Clear();
+}
+
 void GameObject::Clear() {
     m_id = 0;
     m_next = nullptr;
@@ -339,6 +351,19 @@ void GameObjectManager::Init() {
     m_arena.Init(capacity, memory);
 
     m_gos.reserve(capacity);
+}
+
+void GameObjectManager::Destroy() {
+    for (auto *go : m_gos) {
+        go->SetNext(m_firstFree);
+        m_firstFree = go;
+        go->Destroy();
+    }
+
+    m_genId = 0;
+    m_firstFree = nullptr;
+    m_gos.clear();
+    m_arena.Clear();
 }
 
 GameObjectManager::~GameObjectManager() {
@@ -427,9 +452,21 @@ void DrawManager::Dispatch() {
     for (const auto &item : m_fontItems) {
         DrawTextEx(item.font, item.text.c_str(), item.position, item.size.x, item.spacing, item.color);
     }
+}
 
-    m_fontItems.clear();
+void DrawManager::Flush() {
     m_textureItems.clear();
+    m_fontItems.clear();
+}
+
+void DrawManager::Record(RecordedDrawItems &record) {
+    std::copy(m_textureItems.begin(), m_textureItems.end(), std::back_inserter(record.textureItems));
+    std::copy(m_fontItems.begin(), m_fontItems.end(), std::back_inserter(record.fontItems));
+}
+
+void DrawManager::Copy(const RecordedDrawItems &record) {
+    std::copy(record.textureItems.begin(), record.textureItems.end(), std::back_inserter(m_textureItems));
+    std::copy(record.fontItems.begin(), record.fontItems.end(), std::back_inserter(m_fontItems));
 }
 
 View View::Push(f32 xpos, f32 ypos, f32 w, f32 h) {
