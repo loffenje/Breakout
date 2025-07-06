@@ -1,6 +1,8 @@
 #pragma once
 
 #include <raymath.h>
+#include <time.h>
+#include <unordered_set>
 #include "gamelib.h"
 
 namespace breakout {
@@ -15,19 +17,26 @@ enum class Collision {
     Right,
 };
 
+enum class CollidableType {
+    Alien,
+    Block,
+    Ball
+};
+
 class CollisionManager {
     struct Collidable {
         GameObject *    go;
         Rectangle       bounds;
     };
 public:
-    void AddBall(GameObject *go);
-    void AddBlock(GameObject *go, Rectangle bounds);
-    void RemoveBlock(GameObject *go);
+    void Add(CollidableType type, GameObject *go, Rectangle bounds);
+    void Remove(CollidableType type, GameObject *go);
     void Tick();
     void DebugDraw();
     void Clear();
 private:
+    void RemoveCollidable(std::vector<Collidable> &collidable, GameObject *testGo);
+    std::vector<Collidable> m_aliens;
     std::vector<Collidable> m_balls;
     std::vector<Collidable> m_blocks;
 };
@@ -55,6 +64,7 @@ enum class GameplayState {
 struct Menu {
     enum : int {
         PLAY = 0,
+        RESUME,
         QUIT,
         MAX_SIZE
     };
@@ -74,6 +84,8 @@ struct Menu {
         texts.Clear();
         options.Clear();
 
+        selectedOption = PLAY;
+
         view = View::PushCentered(parent, 200.0f, 200.0f);
         title = View::PushText(parent, 100.0f, 100.0f);
 
@@ -86,6 +98,29 @@ struct Menu {
         texts.Add("Quit");
 
         options.Add(PLAY);
+        options.Add(QUIT);
+    }
+
+    void InitResumeMenu(View parent) {
+
+        stack.Clear();
+        texts.Clear();
+        options.Clear();
+
+        selectedOption = RESUME;
+
+        view = View::PushCentered(parent, 200.0f, 200.0f);
+        title = View::PushText(parent, 100.0f, 100.0f);
+
+        const f32 offset = 5.0f;
+
+        stack.Add(View::PushFrom(view, 0, offset, 0.0f, 100.0f));
+        stack.Add(View::PushFrom(view, 0, offset + 100.0f, 0.0f, 100.0f));
+
+        texts.Add("Resume");
+        texts.Add("Quit");
+
+        options.Add(RESUME);
         options.Add(QUIT);
     }
 
@@ -121,6 +156,7 @@ struct GameState {
     GameplayState       gameplayState;
     Menu                menu;
     HUD                 hud;
+    View                mainView;
     Rectangle           worldDim;
     GameObjectManager   goMgr;
     CollisionManager    collisionMgr;
@@ -160,23 +196,56 @@ class PlayerComponent : public Component {
 public:
     COMPONENT_NAME(PlayerComponent)
 
-    static constexpr f32 SPEED = 480.0f;
+    static constexpr f32 SPEED = 800.0f;
+    static constexpr f32 WIDTH = 128.0f;
+    static constexpr f32 HEIGHT = 32.0f;
 
     PlayerComponent(f32 x, f32 y, f32 w, f32 h);
 
-    void Init() override;
+    void OnInit() override;
     void Tick(f32 dt) override;
-    Vector2 GetPosition() const { return m_position; }
     f32 GetVelocity() const { return m_velocity; }
-    Vector2 GetSize() const { return m_size; }
     Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
 
 private:
-    Vector2     m_position;
-    Vector2     m_size;
     f32         m_velocity;
     int         m_textureId = 0;
     Rectangle   m_textureSrc = {};
+};
+
+class PortalComponent : public Component {
+    enum class State {
+        Idle,
+        Spawned,
+        Invade,
+        Finalization
+    };
+
+    static constexpr f32 SPAWN_TIME_DIFF = 10.0f;
+    static constexpr f32 INVADE_TIME_DIFF = 2.0f;
+    static constexpr int MAX_SPAWNING_POINTS = 4;
+    static constexpr int MAX_ALIENS = 4;
+    static constexpr f32 ALIEN_SIZE = 128.0f;
+    static constexpr f32 ALIEN_RADIUS = 64.0f;
+
+public:
+    COMPONENT_NAME(PortalComponent)
+    
+    void OnInit() override;
+    void OnDestroy() override;
+    void Tick(f32 dt) override;
+private:
+    void UpdateAliensLifetime();
+    void SpawnAlien();
+
+    Buffer<Vector2, MAX_SPAWNING_POINTS>            m_spawningPoints;
+    Buffer<GameObject *, MAX_SPAWNING_POINTS>       m_aliens;
+    std::unordered_set<int>                         m_fallenAliens;
+    f32                                             m_lastInvadeTime;
+    f32                                             m_lastSpawnTime;
+    State                                           m_state;
+    f32                                             m_radius;
+    int                                             m_textureId;
 };
 
 class BallComponent : public Component {
@@ -186,18 +255,19 @@ class BallComponent : public Component {
     };
 
     static constexpr Vector2 INIT_VELOCITY = { 100.0f, -660.0f };
-
 public:
+    static constexpr f32 WIDTH = 64.0f;
+    static constexpr f32 HEIGHT = 64.0f;
+    static constexpr f32 RADIUS = 32.0f;
+
     COMPONENT_NAME(BallComponent)
 
     BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r);
 
-    void Init() override;
+    void OnInit() override;
     void Launch();
     void Tick(f32 dt) override;
     void OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) override;
-    Vector2 GetPosition() const { return m_position; }
-    Vector2 GetSize() const { return m_size; }
     f32 GetRadius() const { return m_radius; }
     Vector2 GetCenter() const { return { m_position.x + m_radius, m_position.y + m_radius }; }
     bool IsLaunched() const { return m_state == State::Launched; }
@@ -206,11 +276,31 @@ private:
     void ResolveBlockCollision(const CollisionManifold &manifold);
 
     State   m_state;
-    Vector2 m_position;
-    Vector2 m_size;
     Vector2 m_velocity;
     f32     m_radius;
     int     m_textureId = 0;
+};
+
+class AlienComponent : public Component {
+    static constexpr f32 SPEED = 700.0f;
+public:
+
+    COMPONENT_NAME(AlienComponent)
+
+    AlienComponent(f32 x, f32 y, f32 w, f32 h, f32 r);
+
+    void OnInit() override;
+    void Tick(f32 dt) override;
+    bool Fell() const { return m_fellDown; }
+    Vector2 GetCenter() const { return { m_position.x + m_radius, m_position.y + m_radius }; }
+    f32 GetRadius() const { return m_radius; }
+    void OnCollision();
+private:
+    Vector2     m_dir;
+    Rectangle   m_textureSrc;
+    int         m_textureId;
+    f32         m_radius;
+    bool        m_fellDown = false;
 };
 
 class BlockComponent : public Component {
@@ -218,15 +308,11 @@ public:
     COMPONENT_NAME(BlockComponent)
 
     BlockComponent(f32 x, f32 y, f32 width, f32 height);
-    void Init() override;
+    void OnInit() override;
     void Tick(f32) override;
-    Vector2 GetPosition() const { return m_position; }
-    Vector2 GetSize() const { return m_size; }
     Vector2 GetCenter() const { return { m_position.x + (m_size.x * 0.5f), m_position.y + (m_size.y * 0.5f) }; }
     void OnCollision(const CollisionManifold &manifold, GameObject *go);
 private:
-    Vector2     m_position;
-    Vector2     m_size;
     int         m_textureId = 0;
     Rectangle   m_textureSrc = {};
 };
@@ -238,7 +324,7 @@ PlayerComponent::PlayerComponent(f32 x, f32 y, f32 w, f32 h) {
 }
 
 
-void PlayerComponent::Init() {
+void PlayerComponent::OnInit() {
     m_textureId = g_gameState.res.Acquire("assets/tiles.png");
     m_textureSrc = Rectangle{ 96, 64, 16, 16 };
 }
@@ -283,6 +369,97 @@ void PlayerComponent::Tick(f32 dt) {
     DrawManager::Instance().Add(drawItem);
 }
 
+void PortalComponent::OnInit() {
+    m_textureId = g_gameState.res.Acquire("assets/Portal.png");
+
+    m_state = State::Idle;
+
+    m_spawningPoints.Add(Vector2{ g_gameState.worldDim.x + 600.0f,  g_gameState.worldDim.y + 200.0f });
+    m_spawningPoints.Add(Vector2{ g_gameState.worldDim.width - 400.0f,  g_gameState.worldDim.y + 200.0f });
+    m_spawningPoints.Add(Vector2{ g_gameState.worldDim.x + 600.0f,  g_gameState.worldDim.y + 400.0f });
+    m_spawningPoints.Add(Vector2{ g_gameState.worldDim.width - 400.0f,  g_gameState.worldDim.y + 400.0f });
+
+    m_lastSpawnTime = GetTime();
+    m_lastInvadeTime = GetTime();
+}
+
+void PortalComponent::OnDestroy() {
+    m_state = State::Idle;
+    m_aliens.Clear();
+    m_spawningPoints.Clear();
+}
+
+void PortalComponent::Tick(f32 dt) {
+    f32 currTime = GetTime();
+    if (m_state == State::Idle && currTime - m_lastSpawnTime >= SPAWN_TIME_DIFF) {
+        int idx = GetRandomValue(0, m_spawningPoints.len - 1);
+        m_position = m_spawningPoints[idx];
+        m_state = State::Spawned;
+
+        return;
+    }
+
+
+    if (m_state == State::Spawned) {
+        SpawnAlien();
+
+        Texture2D texture = g_gameState.res.textures[m_textureId];
+        DrawItem drawItem = {};
+        drawItem.position = m_position;
+        drawItem.texture = texture;
+        drawItem.src = Rectangle{ 0, 0, (f32)texture.width, (f32)texture.height };
+        drawItem.size = Vector2{ 256, 256 };
+        drawItem.z_index = 0;
+        DrawManager::Instance().Add(drawItem);
+    }
+
+    if (m_state == State::Finalization) {
+        UpdateAliensLifetime();
+    }
+}
+
+void PortalComponent::SpawnAlien() {
+    bool shouldSpawnAliens = m_aliens.len != MAX_ALIENS;
+    if (shouldSpawnAliens) {
+        f32 currTime = GetTime();
+        if (currTime - m_lastInvadeTime >= INVADE_TIME_DIFF) {
+            GameObject *alien = g_gameState.goMgr.Create();
+            alien->AddComponent<AlienComponent>(m_position.x, m_position.y, ALIEN_SIZE, ALIEN_SIZE, ALIEN_RADIUS);
+            m_aliens.Add(alien);
+
+            m_lastInvadeTime = GetTime();
+        }
+    }
+    else {
+        m_state = State::Finalization;
+    }
+}
+
+void PortalComponent::UpdateAliensLifetime() {
+
+    for (int i = 0; i < m_aliens.len; ++i) {
+        auto *alien = m_aliens[i];
+        AlienComponent *alienComp = alien->GetComponent<AlienComponent>();
+        if (alienComp && alienComp->Fell()) {
+            m_fallenAliens.insert(alien->GetId());
+        }
+    }
+
+    // every spawned alien has fallen into abyss
+    if (m_fallenAliens.size() == m_aliens.len) {
+        for (int i = 0; i < m_aliens.len; ++i) {
+            auto *alien = m_aliens[i];
+            g_gameState.collisionMgr.Remove(CollidableType::Alien, alien);
+            g_gameState.goMgr.Destroy(m_aliens[i]);
+        }
+
+        m_fallenAliens.clear();
+        m_lastSpawnTime = GetTime();
+        m_aliens.Clear();
+        m_state = State::Idle;
+    }
+}
+
 BallComponent::BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r) {
     m_position = { x, y };
     m_size = { w, h };
@@ -294,11 +471,11 @@ BallComponent::BallComponent(f32 x, f32 y, f32 w, f32 h, f32 r) {
 void BallComponent::Launch() {
     if (m_state == State::Attached) {
         m_state = State::Launched;
-        g_gameState.collisionMgr.AddBall(m_go);
+        g_gameState.collisionMgr.Add(CollidableType::Ball, m_go, Rectangle{});
     }
 }
 
-void BallComponent::Init() {
+void BallComponent::OnInit() {
     m_textureId = g_gameState.res.Acquire("assets/doge.png");
 }
 
@@ -403,18 +580,66 @@ void BallComponent::OnCollision(const CollisionManifold &manifold, GameObject *c
     g_gameState.hitScore++;
 }
 
+
+AlienComponent::AlienComponent(f32 x, f32 y, f32 w, f32 h, f32 r) {
+    m_position = { x, y };
+    m_size = { w, h };
+    m_radius = r;
+}
+
+void AlienComponent::OnInit() {
+    m_textureId = g_gameState.res.Acquire("assets/aliens.png");
+    const int maxTextures = 4;
+    Rectangle textureSrcs[maxTextures] = {
+        Rectangle{64, 0, 64, 64},
+        Rectangle{0, 448, 64, 64},
+        Rectangle{384, 448, 64, 64},
+        Rectangle{0, 0, 64, 64},
+    };
+
+    m_textureSrc = textureSrcs[GetRandomValue(0, maxTextures - 1)];
+
+    auto *playerComp = g_gameState.player->GetComponent<PlayerComponent>();
+    m_dir = Vector2Subtract(playerComp->GetPosition(), m_position);
+    m_dir = Vector2Normalize(m_dir);
+    g_gameState.collisionMgr.Add(CollidableType::Alien, m_go, Rectangle{});
+}
+
+void AlienComponent::OnCollision() {
+    g_gameState.gameplayState = GameplayState::PreGameOver;
+}
+
+void AlienComponent::Tick(f32 dt) {
+    Vector2 velocity = Vector2Scale(m_dir, SPEED * dt);
+    m_position = m_position + velocity;
+
+    if (m_position.y > g_gameState.worldDim.height) {
+        m_fellDown = true;
+        return;
+    }
+
+    Texture2D texture = g_gameState.res.textures[m_textureId];
+    DrawItem drawItem = {};
+    drawItem.position = m_position;
+    drawItem.texture = texture;
+    drawItem.src = m_textureSrc;
+    drawItem.size = m_size;
+    drawItem.z_index = 100;
+    DrawManager::Instance().Add(drawItem);
+}
+
 BlockComponent::BlockComponent(f32 x, f32 y, f32 width, f32 height) {
     m_position = { x, y };
     m_size = { width, height };
 }
 
-void BlockComponent::Init() {
+void BlockComponent::OnInit() {
     Vector2 center = GetCenter();
     Vector2 halfSize = { m_size.x * 0.5f, m_size.y * 0.5f };
     m_textureId = g_gameState.res.Acquire("assets/tiles.png");
     m_textureSrc = Rectangle{ 0, 0, 25, 25 };
 
-    g_gameState.collisionMgr.AddBlock(m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
+    g_gameState.collisionMgr.Add(CollidableType::Block, m_go, Rectangle{ center.x, center.y, halfSize.x, halfSize.y });
 }
 
 void BlockComponent::Tick(f32) {
@@ -428,36 +653,57 @@ void BlockComponent::Tick(f32) {
 }
 
 void BlockComponent::OnCollision(const CollisionManifold &manifold, GameObject *go) {
-    g_gameState.collisionMgr.RemoveBlock(m_go);
+    g_gameState.collisionMgr.Remove(CollidableType::Block, m_go);
 }
 
-void CollisionManager::AddBlock(GameObject *go, Rectangle bounds) {
-    m_blocks.emplace_back(Collidable{go, bounds});
+void CollisionManager::Add(CollidableType type, GameObject *go, Rectangle bounds) {
+    Collidable collidable = { go, bounds };
+    switch (type) {
+    case CollidableType::Alien:
+        m_aliens.push_back(collidable);
+        break;
+    case CollidableType::Block:
+        m_blocks.push_back(collidable);
+        break;
+    case CollidableType::Ball:
+        m_balls.push_back(collidable);
+        break;
+    }
 }
 
-void CollisionManager::AddBall(GameObject *go) {
-    m_balls.push_back(Collidable{ go, Rectangle{} });
+void CollisionManager::Remove(CollidableType type, GameObject *go) {
+    switch (type) {
+    case CollidableType::Alien:
+        RemoveCollidable(m_aliens, go);
+        break;
+    case CollidableType::Block:
+        RemoveCollidable(m_blocks, go);
+        break;
+    case CollidableType::Ball:
+        RemoveCollidable(m_balls, go);
+        break;
+    }
 }
 
-void CollisionManager::RemoveBlock(GameObject *go) {
-    if (m_blocks.empty()) {
+void CollisionManager::RemoveCollidable(std::vector<Collidable> &collidable, GameObject *testGo) {
+    if (collidable.empty()) {
         return;
     }
 
     // don't care about sorting, should be faster than erase/remove
     int destroyIdx = 0;
-    for (int i = 0; i < m_blocks.size(); ++i) {
-        if (go->GetId() == m_blocks[i].go->GetId()) {
+    for (int i = 0; i < collidable.size(); ++i) {
+        if (testGo->GetId() == collidable[i].go->GetId()) {
             destroyIdx = i;
             break;
         }
     }
 
-    RemoveByIndex(m_blocks, destroyIdx);
+    RemoveByIndex(collidable, destroyIdx);
 }
 
 void CollisionManager::Tick() {
-// NOTE: reallisticly there is always one ball. But if I decide to add some powerup that adds multiple balls, then this setup already works.
+// NOTE: realistically there is always one ball. But if I decide to add some powerup that adds multiple balls, then this setup already works.
 // TODO: consider to have quad tree. For now this is fine since the number of game objects is small.
 
     //1st test - dynamic bounds vs dynamic bounds
@@ -470,6 +716,7 @@ void CollisionManager::Tick() {
         AABB aabbPlayer = { playerComp->GetCenter(), halfSize };
 
         Rectangle bounds = { pos.x, pos.y, size.x, size.y };
+        //player vs ball
         for (auto &ball : m_balls) {
             BallComponent *ballComp = ball.go->GetComponent<BallComponent>();
             Vector2 center = ballComp->GetCenter();
@@ -482,9 +729,24 @@ void CollisionManager::Tick() {
                 ballComp->OnCollision(manifold, g_gameState.player);
             }
         }
+        // player vs alien
+        for (auto &alien : m_aliens) {
+            Rectangle bounds = { pos.x, pos.y, size.x, size.y };
+            AlienComponent *alienComp = alien.go->GetComponent<AlienComponent>();
+            Vector2 center = alienComp->GetCenter();
+            f32 radius = alienComp->GetRadius();
+            alien.bounds = Rectangle{ center.x, center.y, radius, radius };
+            Circle circle = { center, radius };
+            CollisionManifold manifold = AABBvsCircle(aabbPlayer, circle);
+            if (manifold.collides) {
+                // don't need manifold info for alien
+                alienComp->OnCollision();
+                break;
+            }
+        }
     }
 
-    //2nd test - dynamic bounds vs static bounds
+    //2nd test - dynamic bounds vs static bounds. ball vs block
     for (auto &ball : m_balls) {
         BallComponent *ballComp = ball.go->GetComponent<BallComponent>();
         Vector2 center = { ball.bounds.x, ball.bounds.y };
@@ -519,6 +781,10 @@ void CollisionManager::DebugDraw() {
         DrawCircleLinesV(Vector2{ ball.bounds.x, ball.bounds.y }, ball.bounds.width, RED);
     }
 
+    for (const auto &alien : m_aliens) {
+        DrawCircleLinesV(Vector2{ alien.bounds.x, alien.bounds.y }, alien.bounds.width, RED);
+    }
+
     for (const auto &block : m_blocks) {
         auto bounds = ScaleAABB(block.bounds);
         DrawRectangleLinesEx(bounds, 2.0f, RED);
@@ -528,6 +794,7 @@ void CollisionManager::DebugDraw() {
 void CollisionManager::Clear() {
     m_balls.clear();
     m_blocks.clear();
+    m_aliens.clear();
 }
 
 Map::Map(Vector2 origin, Vector2 tileSize, int width, int height) :
@@ -606,6 +873,8 @@ void DestroyScene() {
     g_gameState.recordedDrawings.fontItems.clear();
     g_gameState.resetTimer = 0;
     g_gameState.collisionMgr.Clear();
+
+    g_gameState.menu.InitStartMenu(g_gameState.mainView);
     g_gameState.gameplayState = GameplayState::RunMenu;
 }
 
@@ -613,10 +882,13 @@ static
 void InitScene() {
 
     g_gameState.player = g_gameState.goMgr.Create();
-    g_gameState.player->AddComponent<PlayerComponent>(-16.0f, g_gameState.worldDim.height - 40.0f, 128.0f, 32.0f);
+    g_gameState.player->AddComponent<PlayerComponent>(-16.0f, g_gameState.worldDim.height - 40.0f, PlayerComponent::WIDTH, PlayerComponent::HEIGHT);
 
     g_gameState.ball = g_gameState.goMgr.Create();
-    g_gameState.ball->AddComponent<BallComponent>(0.0f, g_gameState.worldDim.height - 110.0f, 64.0f, 64.0f, 32.0f);
+    g_gameState.ball->AddComponent<BallComponent>(0.0f, g_gameState.worldDim.height - 110.0f, BallComponent::WIDTH, BallComponent::HEIGHT, BallComponent::RADIUS);
+
+    auto *portal = g_gameState.goMgr.Create();
+    portal->AddComponent<PortalComponent>();
 
     const int width = 9;
     const int height = 3;
@@ -632,7 +904,8 @@ void InitScene() {
 }
 
 void Initialize() {
-    View mainView = View::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
+    SetRandomSeed(time(NULL));
+    g_gameState.mainView = View::Push(0, 0, globals::appSettings.screenWidth, globals::appSettings.screenHeight);
     g_gameState.worldDim.x = globals::appSettings.screenWidth * -0.5f;
     g_gameState.worldDim.y = globals::appSettings.screenHeight * -0.5f;
     g_gameState.worldDim.width = globals::appSettings.screenWidth * 0.5f;
@@ -647,25 +920,20 @@ void Initialize() {
     g_gameState.res.LoadTexture("assets/bg.png");
     g_gameState.res.LoadTexture("assets/tiles.png");
     g_gameState.res.LoadTexture("assets/doge.png");
+    g_gameState.res.LoadTexture("assets/Portal.png");
+    g_gameState.res.LoadTexture("assets/aliens.png");
     
     auto fontHandle = g_gameState.res.LoadFont("assets/nicefont.ttf", 72); // probably not
 
-    g_gameState.hud.Init(mainView, fontHandle);
+    g_gameState.hud.Init(g_gameState.mainView, fontHandle);
     g_gameState.goMgr.Init();
 
-    InitScene();
-
     g_gameState.gameplayState = GameplayState::RunMenu;
-    g_gameState.menu.InitStartMenu(mainView);
+    g_gameState.menu.InitStartMenu(g_gameState.mainView);
 }
 
 static
 void PostGameResultMessage(const std::string &text, Color color) {
-    f32 currTime = GetTime();
-    if (currTime - g_gameState.resetTimer > GAME_RESET_DIFF) {
-        DestroyScene();
-        InitScene();
-    }
 
     DrawItem item;
     item.type = DrawItemType::Font;
@@ -686,6 +954,7 @@ void UpdateGame(f32 dt) {
     switch (g_gameState.gameplayState) {
     case GameplayState::RunGame:
         if (IsKeyPressed(KEY_ESCAPE)) {
+            g_gameState.menu.InitResumeMenu(g_gameState.mainView);
             g_gameState.gameplayState = GameplayState::RunMenu;
         }
 
@@ -702,7 +971,6 @@ void UpdateGame(f32 dt) {
         f32 currTime = GetTime();
         if (currTime - g_gameState.resetTimer > GAME_RESET_DIFF) {
             DestroyScene();
-            InitScene();
             break;
         }
 
@@ -716,7 +984,6 @@ void UpdateGame(f32 dt) {
         f32 currTime = GetTime();
         if (currTime - g_gameState.resetTimer > GAME_RESET_DIFF) {
             DestroyScene();
-            InitScene();
             break;
         }
 
@@ -751,6 +1018,10 @@ void UpdateMenu() {
     if (IsKeyPressed(KEY_ENTER)) {
         switch (g_gameState.menu.selectedOption) {
         case Menu::PLAY: 
+            InitScene();
+            g_gameState.gameplayState = GameplayState::RunGame;
+            break;
+        case Menu::RESUME:
             g_gameState.gameplayState = GameplayState::RunGame;
             break;
         case Menu::QUIT:

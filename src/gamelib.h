@@ -191,15 +191,19 @@ private:
 
 class Component {
 public:
-    virtual void Init() {}
-    virtual void Destroy() {}
+    virtual void OnInit() {}
+    virtual void OnDestroy() {}
     virtual void Tick(f32 dt) = 0;
     virtual void Clear() {}
     virtual const char *ComponentName() const = 0;
     virtual void OnCollision(const CollisionManifold &manifold, GameObject *collidedObject) {}
     virtual void SetOwner(GameObject *go) { m_go = go; }
+    Vector2 GetPosition() const { return m_position; }
+    Vector2 GetSize() const { return m_size; }
 protected:
     GameObject *    m_go = nullptr;
+    Vector2         m_position;
+    Vector2         m_size;
 };
 
 #define COMPONENT_NAME(klass)                                                                                      \
@@ -305,7 +309,7 @@ template <typename T>
 void GameObject::AddComponent() {
     Component *comp = m_arena.Push<T>();
 
-    comp->Init();
+    comp->OnInit();
     comp->SetOwner(this);
 
     m_components.push_back(comp);
@@ -316,7 +320,7 @@ void GameObject::AddComponent(Args &&...args) {
     Component *comp = m_arena.Push<T>(std::forward<Args>(args)...);
 
     comp->SetOwner(this);
-    comp->Init();
+    comp->OnInit();
 
     m_components.push_back(comp);
 }
@@ -324,6 +328,7 @@ void GameObject::AddComponent(Args &&...args) {
 template<typename T>
 T *GameObject::GetComponent() const {
     for (const auto &comp : m_components) {
+        //NOTE: interned strings would be faster here
         if (strcmp(comp->ComponentName(), T::ClassName()) == 0) {
             return static_cast<T *>(comp);
         }
@@ -333,6 +338,10 @@ T *GameObject::GetComponent() const {
 }
 
 void GameObject::Destroy() {
+    for (auto *comp : m_components) {
+        comp->OnDestroy();
+    }
+
     free(m_memory);
 
     Clear();
